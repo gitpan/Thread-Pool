@@ -5,57 +5,115 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use Test::More tests => 22;
 use strict;
+use IO::Handle;
+our $tests;
+BEGIN {$tests = 1 + (2*3*11)}
+use Test::More tests => $tests;
 
-diag( "Test abort() functionality" );
+diag( "Test job throttling" );
 
 BEGIN { use_ok('Thread::Pool') }
 
-my $check = '';
-my @list : shared = ('');
-my $threads = 10;
-my $times = 100;
+SKIP: {
 
-sub do { sleep( rand(2) ); $_[0] }
+eval {require Thread::Queue::Any::Monitored};
+skip( "Thread::Queue::Any::Monitored not installed", $tests-1 ) if $@;
 
-sub stream { push( @list,$_[0] ) }
+my $check;
+my $format = '%5d';
+my @list;
 
-my $pool = Thread::Pool->new( {workers => 10,do => \&do, stream => \&stream} );
+my $file = 'anymonitor';
+my $handle;
+
+# [1,1000],
+# [int(2+rand(8)),int(1+rand(1000))],
+my @amount = (
+ [10,0],
+ [5,5],
+ [10,100],
+);
+
+
+sub pre {
+  return unless Thread::Pool->monitor;
+  open( $handle,">$_[0]" ) or die "Could not open file $_[0]: $!";
+  $handle->autoflush;
+}
+
+sub post {
+  return unless Thread::Pool->monitor;
+  close( $handle );
+}
+
+sub do { sprintf( $format,$_[0] ) }
+
+sub yield { threads::yield(); sprintf( $format,$_[0] ) }
+
+sub file { print $handle $_[0] }
+
+diag( qq(*** Test using fast "do" ***) );
+_runtest( @{$_},qw(pre do file post) ) foreach @amount;
+
+diag( qq(*** Test using slower "yield" ***) );
+_runtest( @{$_},qw(pre yield file post) ) foreach @amount;
+
+
+unlink( $file );
+
+
+sub _runtest {
+
+my ($t,$times,$pre,$do,$monitor,$post) = @_;
+diag( "Now testing $t thread(s) for $times jobs" );
+
+my $pool = Thread::Pool->new(
+ {
+  workers => $t,
+  pre => $pre,
+  do => $do,
+  monitor => $monitor,
+  post => $post,
+ },
+ $file
+);
 isa_ok( $pool,'Thread::Pool',		'check object type' );
-cmp_ok( scalar($pool->workers),'==',$threads,'check initial number of workers');
+cmp_ok( scalar($pool->workers),'==',$t,	'check initial number of workers' );
 
+$check = '';
+foreach ( 1..$times ) {
+  $pool->job( $_ );
+  $check .= sprintf( $format,$_ );
+}
+
+threads::yield() while $pool->results;
+sleep( 1 ); # Must find a better way to do this
+
+open( my $in,"<$file" ) or die "Could not read $file: $!";
+is( join('',<$in>),$check,		'check first result' );
+close( $in );
+
+diag( "Now testing ".($t+$t)." thread(s) for $times jobs" );
 $pool->job( $_ ) foreach 1..$times;
-$pool->abort;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #1' );
-cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #1' );
-cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #1' );
 
-my $todo = $pool->todo;
-my $done = $pool->done;
-ok( $todo >= 0 and $todo <= $times,	'check # jobs todo, #1' );
-ok( $done >= 0 and $done <= $times,	'check # jobs done, #1' );
+$pool->workers( $t+$t );
+cmp_ok( scalar($pool->workers),'==',$t+$t, 'check number of workers' );
 
 $pool->shutdown;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #2' );
-cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #2' );
-cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #2' );
-
-$pool->add( 5 );
-cmp_ok( scalar(()=threads->list),'==',5,'check for remaining threads, #3' );
-cmp_ok( scalar($pool->workers),'==',5,	'check number of workers, #3' );
-cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #3' );
-
-$pool->shutdown;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #4' );
-cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #4' );
-cmp_ok( scalar($pool->removed),'==',$threads+5, 'check number of removed, #4' );
-cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #2' );
-cmp_ok( $pool->done,'==',$times,	'check # jobs done, #2' );
+cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads' );
+cmp_ok( scalar($pool->workers),'==',0,	'check number of workers' );
+cmp_ok( scalar($pool->removed),'==',$t+$t, 'check number of removed' );
+cmp_ok( $pool->todo,'==',0,		'check # jobs todo' );
+cmp_ok( $pool->done,'==',$times+$times,	'check # jobs done' );
 
 my $notused = $pool->notused;
-ok( $notused >= 0 and $notused <= $threads, 'check not-used threads, #1' );
-cmp_ok( $#list,'==',$times,		'check length of list, #1' );
+ok( $notused >= 0 and $notused < $t+$t,	'check not-used threads' );
 
-$check .= $_ foreach 1..$times;
-is( join('',@list),$check,		'check result' );
+open( $in,"<$file" ) or die "Could not read $file: $!";
+is( join('',<$in>),$check.$check,	'check second result' );
+close( $in );
+
+} #_runtest
+
+} #SKIP:

@@ -1,10 +1,6 @@
-Add high water/ low water mark functionality for throttling jobs being
-submitted.  So, if number of jobs is larger than high, job() will block until
-number of jobs is lower than low.
-
 Add Thread::Pool::LogResolve functionality.  Possibly add an IO-layer for
 it.
 
-Add examples.
+Add more examples.
 
-Add automatic handling of adding/removing threads a la Apache.
+Add automatic handling of adding/removing threads a la Apache?

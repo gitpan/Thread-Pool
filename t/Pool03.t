@@ -11,7 +11,7 @@ our $tests;
 BEGIN {$tests = 1 + (2*5*17)}
 use Test::More tests => $tests;
 
-diag( "Test streaming to file" );
+diag( "Test monitoring to file" );
 
 BEGIN { use_ok('Thread::Pool') }
 
@@ -74,6 +74,7 @@ my $pool = Thread::Pool->new(
   do => $do,
   monitor => $monitor,
   post => $post,
+  maxjobs => undef,
  },
  $file
 );

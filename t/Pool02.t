@@ -48,7 +48,14 @@ diag( "Now testing $t thread(s) for $times jobs" );
 $check = '';
 @list = ('');
 
-my $pool = Thread::Pool->new( {workers => $t,do => $do, stream => $stream} );
+my $pool = Thread::Pool->new(
+ {
+  workers => $t,
+  maxjobs => undef,
+  do => $do,
+  stream => $stream
+ }
+);
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 cmp_ok( scalar($pool->workers),'==',$t,	'check initial number of workers' );
 

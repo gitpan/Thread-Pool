@@ -1,3 +1,28 @@
+0.17	22 July 2002
+	Added support for job throttling by the "maxjobs" and "minjobs" field
+	in the "new" method.  Adapted the "_random" and "_stream" dispatchers
+	as well as the "job" method.  Added test-suite for this as well.
+	This code is really still alpha, it does not seem to get through the
+	test always, so there could still be some deadlocking issues here.
+
+	Added method "results".  Returns the job IDs of which there are still
+	results ready to be fetched.  Returns the number of results in scalar
+	context.
+
+	Added class method "monitor" that returns the
+	Thread::Queue::Any::Monitored object associated with the pool in the
+	"do", "pre" and "post" routine if monitoring.
+
+	Changed rogue DESTROY hack to use UNIVERSAL::isa().  Suggested by
+	Ken Williams.
+
+	Added the first full blown example: a simple log resolving filter.
+
+	Removed some "originatingthreadid" cruft that was left behind.  Also
+	removed some "destroyed" cruft.
+
+	Simplified the rogue DESTROY test hack.
+
 0.16	21 July 2002
 	Added test-case for testing all of the methods that can be called.
 	Completed the multi-thread job submission test.

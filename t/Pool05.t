@@ -5,57 +5,57 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use Test::More tests => 11;
+use Test::More tests => 22;
 use strict;
 
-diag( "Test job submission from different threads" );
-
-my $pool;
+diag( "Test abort() functionality" );
 
 BEGIN { use_ok('Thread::Pool') }
 
-my $check;
-my @list : shared;
-my $count : shared = 0;
-my $threads = 5;
-my $times = 1000;
+my $check = '';
+my @list : shared = ('');
+my $threads = 10;
+my $times = 100;
 
-sub do { $_[0] }
+sub do { sleep( rand(2) ); $_[0] }
 
 sub stream { push( @list,$_[0] ) }
 
-sub submit {
-  while (1) {
-    {
-     lock( $count );
-     return if $count == $times;
-     $pool->job( ++$count );
-    }
-  }
-}
-
-$pool = Thread::Pool->new(
- {
-  workers => $threads,
-  do => \&do,
-  stream => \&stream
- }
-);
+my $pool = Thread::Pool->new( {workers => 10,do => \&do, stream => \&stream} );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 cmp_ok( scalar($pool->workers),'==',$threads,'check initial number of workers');
 
-my @thread;
-push( @thread,threads->new( \&submit ) ) foreach 1..$threads;
-$_->join foreach @thread;
-cmp_ok( $count,'==',$times,		'check count' );
+$pool->job( $_ ) foreach 1..$times;
+$pool->abort;
+cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #1' );
+cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #1' );
+cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #1' );
+
+my $todo = $pool->todo;
+my $done = $pool->done;
+ok( $todo >= 0 and $todo <= $times,	'check # jobs todo, #1' );
+ok( $done >= 0 and $done <= $times,	'check # jobs done, #1' );
 
 $pool->shutdown;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads' );
-cmp_ok( scalar($pool->workers),'==',0,	'check number of workers' );
-cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed' );
-cmp_ok( $pool->todo,'==',0,		'check # jobs todo' );
-cmp_ok( $pool->done,'==',$times,	'check # jobs done' );
+cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #2' );
+cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #2' );
+cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #2' );
 
-cmp_ok( scalar(@list),'==',$times,	'check length of list' );
+$pool->add( 5 );
+cmp_ok( scalar(()=threads->list),'==',5,'check for remaining threads, #3' );
+cmp_ok( scalar($pool->workers),'==',5,	'check number of workers, #3' );
+cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #3' );
+
+$pool->shutdown;
+cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #4' );
+cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #4' );
+cmp_ok( scalar($pool->removed),'==',$threads+5, 'check number of removed, #4' );
+cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #2' );
+cmp_ok( $pool->done,'==',$times,	'check # jobs done, #2' );
+
+my $notused = $pool->notused;
+ok( $notused >= 0 and $notused <= $threads, 'check not-used threads, #1' );
+cmp_ok( $#list,'==',$times,		'check length of list, #1' );
+
 $check .= $_ foreach 1..$times;
 is( join('',@list),$check,		'check result' );

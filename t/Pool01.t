@@ -33,11 +33,13 @@ can_ok( $pool,qw(
  job
  jobid
  join
+ monitor
  remove
  remove_me
  removed
  result
  result_dontwait
+ results
  self
  set_result
  shutdown

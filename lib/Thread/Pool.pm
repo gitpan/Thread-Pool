@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.16';
+$VERSION = '0.17';
 use strict;
 
 # Make sure we can do threads
@@ -12,7 +12,7 @@ use strict;
 # Make sure we can freeze and thaw (just to make sure)
 
 use threads ();
-use threads::shared ();
+use threads::shared qw(cond_wait cond_broadcast);
 use Thread::Queue::Any ();
 use Storable ();
 
@@ -42,7 +42,7 @@ sub new {
 
 # Obtain the class
 # Obtain the hash with parameters and bless it
-# Save the clone level
+# Save the clone level (so we can check later if we've been cloned)
 # Die now if there is no subroutine to execute
 
     my $class = shift;
@@ -80,18 +80,20 @@ sub new {
 # Create a super duper queue for it
 # Set the auto-shutdown flag unless it is specified already
 # Set the dispatcher to be used if none specified yet
-# Save the originating thread id (workers can only be added/removed there)
 
     $self->{'jobq'} = Thread::Queue::Any->new;
     $self->{'autoshutdown'} = 1 unless exists $self->{'autoshutdown'};
     $self->{'dispatcher'} ||= $self->{'stream'} ? \&_stream : \&_random;
-    $self->{'originatingtid'} = threads->tid;
 
 # Make sure all subroutines are code references
-# Save the number of workers that were specified now (changed later)
+# Save the number of workers that were specified now (is changed later)
+# Set the maximum number of jobs if not set already
+# Set the minimum number of jobs if not set already
 
     $self->_makecoderef( caller().'::',qw(pre do post stream dispatcher) );
     my $add = $self->{'workers'};
+    $self->{'maxjobs'} = 5 * ($add || 1) unless exists( $self->{'maxjobs'} );
+    $self->{'minjobs'} ||= $self->{'maxjobs'} >> 1;
 
 # Initialize the workers threads list as shared
 # Initialize the removed hash as shared
@@ -99,7 +101,7 @@ sub new {
 # Initialize the result hash as shared
 # Initialize the streamid counter as shared
 # Initialize the running flag
-# Initialize the destroyed flag
+# Initialize the halted flag
 
     my @workers : shared;
     my %removed : shared;
@@ -107,20 +109,18 @@ sub new {
     my %result : shared;
     my $streamid : shared = 1;
     my $running : shared = 1;
-    my $destroyed : shared = 0;
+    my $halted : shared = 0;
 
 # Make sure references exist in the object
 
-    @$self{qw(workers removed jobid result streamid running destroyed)} =
-     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running,\$destroyed);
+    @$self{qw(workers removed jobid result streamid running halted)} =
+     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running,\$halted);
 
 # Save a frozen value to the parameters for later hiring
-# Make sure there is an originating id to check against
 # Add the number of workers indicated
 # Return the instantiated object
 
     $self->{'startup'} = Storable::freeze( \@_ );
-    $self->{'originatingid'} = threads->tid;
     $self->add( $add );
     return $self;
 } #new
@@ -133,15 +133,48 @@ sub new {
 sub job { 
 
 # Obtain the object
+# Obtain local copy of the job queue
+
+    my $self = shift;
+    my $jobq = $self->{'jobq'};
+
+# If there is number of jobs limitation active
+#  Obtain local copy of a reference to the halted flag
+#  If we're currently halted
+#   Lock the job queue
+#   Wait until the halt flag is reset
+
+    if (my $maxjobs = $self->{'maxjobs'}) {
+	my $halted = $self->{'halted'};
+        if ($$halted) {
+            lock( @$jobq );
+            cond_wait( @$jobq ) while $$halted;
+
+#  Elseif there are now too many jobs in the queue
+#   Die now if there are no workers available to ever lower the number of jobs
+#   Lock the job queue
+#   Set the job submission halted flag
+#   Wake up any threads that are waiting for jobs to be handled
+#   Wait until the halt flag is reset
+
+        } elsif (@$jobq > $maxjobs) {
+	    die "Too many jobs submitted while no workers available"
+	     unless $self->workers;
+	    lock( @$jobq );
+	    $$halted = 1;
+            cond_broadcast( @$jobq );
+            cond_wait( @$jobq ) while $$halted;
+        }
+    }
+
 # If we're streaming
 #  Die now if an individual jobid requested
 #  Enqueue with a jobid obtained on the fly
 
-    my $self = shift;
     if ($self->{'stream'}) {
         die "Cannot return individual results when streaming"
          if defined( wantarray );
-        $self->{'jobq'}->enqueue( $self->_jobid, \@_ );
+        $jobq->enqueue( $self->_jobid, \@_ );
 
 # Elseif we want a jobid
 #  Obtain a jobid
@@ -150,14 +183,14 @@ sub job {
 
     } elsif (defined( wantarray )) {
         my $jobid = $self->_jobid;
-        $self->{'jobq'}->enqueue( $jobid, \@_ );
+        $jobq->enqueue( $jobid, \@_ );
         return $jobid;
 
 # Else (not streaming and not interested in the result)
 #  Enqueue without a jobid
 
     } else {
-        $self->{'jobq'}->enqueue( \@_ )
+        $jobq->enqueue( \@_ )
     }
 } #job
 
@@ -229,7 +262,7 @@ sub result {
 
     {
      lock( $result );
-     threads::shared::cond_wait( $result ) until exists $result->{$jobid};
+     cond_wait( $result ) until exists $result->{$jobid};
      $value = $result->{$jobid};
      delete( $result->{$jobid} );
     }
@@ -272,6 +305,21 @@ sub result_dontwait {
 
     @{Storable::thaw( $value )};
 } #result_dontwait
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+# OUT: 1..N results still waiting to be fetched
+
+sub results {
+
+# Obtain local copy to result hash reference
+# Lock access to the result hash
+# Return the keys from the hash
+
+    my $result = shift->{'result'};
+    lock( %$result );
+    keys %$result;
+} #results
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -609,6 +657,12 @@ sub notused {
 sub self { $SELF } #self
 
 #---------------------------------------------------------------------------
+#  IN: 1 class (ignored)
+# OUT: 1 instantiated monitor object
+
+sub monitor { Thread::Queue::Any::Monitored->self } #monitor
+
+#---------------------------------------------------------------------------
 #  IN: 1 instantiated object or class (ignored)
 
 sub remove_me { $remove_me = 1 } #remove_me
@@ -647,7 +701,7 @@ sub set_result {
     my $result = $self->{'result'};
     lock( $result );
     $result->{$set_jobid} = Storable::freeze( \@_ );
-    threads::shared::cond_broadcast( $result );
+    cond_broadcast( $result );
 } #set_result
 
 #---------------------------------------------------------------------------
@@ -673,8 +727,10 @@ sub _random {
 # Obtain local copies from the hash for faster access
 # Perform the pre actions if there are any
 
-    my ($jobq,$do,$post,$result,$removed,$workers,$running) =
-     @$self{qw(jobq do post result removed workers running)};
+    my ($jobq,$do,$post,$result,$removed,$workers,
+        $running,$halted,$maxjobs,$minjobs) =
+     @$self{qw(jobq do post result removed workers
+               running halted maxjobs minjobs)};
     $self->{'pre'}->( @_ ) if exists $self->{'pre'};
 
 # Initialize the list of parameters returned (we need it outside later)
@@ -688,6 +744,23 @@ sub _random {
         @list = $jobq->dequeue;
 	last unless $list[0];
         $dont_set_result = undef;
+
+#  If there is amount of job limitation active
+#   If job submission is halted
+#    If current number of jobs is less than minimum number of jobs
+#     Lock access to the jobe queue
+#     Reset the halted flag, allow job submissions again
+#     Wake up all of the other threads to allow them to submit again
+
+        if ($maxjobs) {
+            if ($$halted) {
+                if (@$jobq <= $minjobs) {
+                    lock( @$jobq );
+                    $$halted = 0;
+                    cond_broadcast( @$jobq );
+                }
+            }
+        }
 
 #  If no one is interested in the result
 #   Reset the jobid
@@ -754,8 +827,10 @@ sub _stream {
 # Perform the pre actions if there are any
 # Set the extra parameters to be passed to streamer if monitoring
 
-    my ($jobq,$do,$post,$result,$stream,$streamid,$removed,$workers,$running) =
-     @$self{qw(jobq do post result stream streamid removed workers running)};
+    my ($jobq,$do,$post,$result,$stream,$streamid,
+        $removed,$workers,$running,$halted,$maxjobs,$minjobs) =
+     @$self{qw(jobq do post result stream streamid
+               removed workers running halted maxjobs minjobs)};
     $self->{'pre'}->( @_ ) if exists $self->{'pre'};
     my @extra = exists $self->{'monitorq'} ? ($self) : ();
 
@@ -768,8 +843,25 @@ sub _stream {
     my (@list,$running_now);
     while ($running_now = $$running) {
         @list = $jobq->dequeue;
-	last unless $jobid = $list[0];
+        last unless $jobid = $list[0];
         $dont_set_result = undef;
+
+#  If there is amount of job limitation active
+#   If job submission is halted
+#    If current number of jobs is less than minimum number of jobs
+#     Lock access to the jobe queue
+#     Reset the halted flag, allow job submissions again
+#     Wake up all of the other threads to allow them to submit again
+
+        if ($maxjobs) {
+            if ($$halted) {
+                if (@$jobq <= $minjobs) {
+                    lock( @$jobq );
+                    $$halted = 0;
+                    cond_broadcast( @$jobq );
+                }
+            }
+        }
 
 #  If we're in sync (this job is the next one to be streamed)
 #   Obtain the result of the job
@@ -900,7 +992,6 @@ sub _check_originating_thread {
 # Die now if in the wrong thread
 
     die qq(Can only call "$_[1]" in the originating thread)
-#     unless threads->tid == $_[0]->{'originatingid'};
      unless $_[0]->{'cloned'} == $cloned;
 } #_check_originating_thread
 
@@ -974,13 +1065,15 @@ sub CLONE { $cloned++ } #CLONE
 
 sub DESTROY {
 
-# Obtain the object
 # Return now if we're in a rogue DESTROY
+
+    return unless UNIVERSAL::isa( $_[0],__PACKAGE__ ); #HACK
+
+# Obtain the object
 # Return now if we're not allowed to run DESTROY
 # Do the shutdown if shutdown is required
 
     my $self = shift;
-    return if !defined( $self ) or not exists $self->{'cloned'}; # HACK
     return unless $self->{'cloned'} == $cloned;
     $self->shutdown if $self->{'autoshutdown'};
 } #DESTROY
@@ -998,13 +1091,15 @@ Thread::Pool - group of threads for performing similar jobs
  use Thread::Pool;
  $pool = Thread::Pool->new(
   {
-   autoshutdown => 1, # default: 1 = yes
-   workers => 5,      # default: 1
    pre => sub {shift; print "starting worker with @_\n",
    do => sub {shift; print "doing job for @_\n"; reverse @_},
    post => sub {shift; print "stopping worker with @_\n",
    stream => sub {shift; print "streamline with @_\n",
    monitor => sub { print "monitor with @_\n",
+   autoshutdown => 1, # default: 1 = yes
+   workers => 10,     # default: 1
+   maxjobs => 50,     # default: 5 * workers
+   minjobs => 5,      # default: maxjobs / 2
   },
   qw(a b c)           # parameters to "pre" subroutine
  );
@@ -1089,11 +1184,14 @@ The following class methods are available.
    pre => sub { print "starting with @_\n",      # default: none
    post => sub { print "stopping with @_\n",     # default: none
 
-   workers => 5,      # default: 1
-   autoshutdown => 1, # default: 1 = yes
-
    stream => sub { print "streamline with @_\n", # default: none
    monitor => sub { print "monitor with @_\n",   # default: none
+
+   autoshutdown => 1, # default: 1 = yes
+
+   workers => 10,     # default: 1
+   maxjobs => 50,     # default: 5 * workers
+   minjobs => 5,      # default: maxjobs / 2
   },
 
   qw(a b c)           # parameters to "pre" routine
@@ -1210,29 +1308,6 @@ Any values that are returned by this subroutine after closing down the thread,
 are accessible with the L<result> method, but only if the thread was
 L<removed> and a job ID was requested.
 
-=item workers
-
- workers => 5, # default: 1
-
-The "workers" field specifies the number of worker threads that should be
-created when the pool is created.  If no "workers" field is specified, then
-only one worker thread will be created.  The L<workers> method can be used
-to change the number of workers later. 
-
-=item autoshutdown
-
- autoshutdown => 0, # default: 1
-
-The "autoshutdown" field specified whether the L<shutdown> method should be
-called when the object is destroyed.  By default, this flag is set to 1
-indicating that the shutdown method should be called when the object is
-being destroyed.  Setting the flag to a false value, will cause the shutdown
-method B<not> to be called, causing potential loss of data and error messages
-when threads are not finished when the program exits.
-
-The setting of the flag can be later changed by calling the L<autoshutdown>
-method.
-
 =item stream
 
  stream => 'in_order_of_submit',	# assume caller's namespace
@@ -1300,6 +1375,56 @@ The "monitor" routine is executed in its own thread.  This means that all
 results have to be passed between threads, and therefore be frozen and thawed
 with L<Storable>.  If you can handle the streaming from different threads,
 it is probably wiser to use the "stream" routine feature.
+
+=item autoshutdown
+
+ autoshutdown => 0, # default: 1
+
+The "autoshutdown" field specified whether the L<shutdown> method should be
+called when the object is destroyed.  By default, this flag is set to 1
+indicating that the shutdown method should be called when the object is
+being destroyed.  Setting the flag to a false value, will cause the shutdown
+method B<not> to be called, causing potential loss of data and error messages
+when threads are not finished when the program exits.
+
+The setting of the flag can be later changed by calling the L<autoshutdown>
+method.
+
+=item workers
+
+ workers => 5, # default: 1
+
+The "workers" field specifies the number of worker threads that should be
+created when the pool is created.  If no "workers" field is specified, then
+only one worker thread will be created.  The L<workers> method can be used
+to change the number of workers later. 
+
+=item maxjobs
+
+ maxjobs => 25, # default: 5 * workers
+
+The "maxjobs" field specifies the B<maximum> number of jobs that can be waiting
+in the queue to be handled (job throttling).  If a new L<job> submission
+would exceed this amount, job submission will be halted until the number of
+jobs waiting to be handled as become at least as low as the amount specified
+with the "minjobs" field.
+
+If the "maxjobs" field is not specified, an amount of 5 * the number of
+worker threads will be assumed.  If you do not want to have any job throttling,
+you can specify the value "undef" for the field.  But beware!  If you do not
+have job throttling active, you may wind up using excessive amounts of memory
+used for storing all of the job submission information.
+
+=item minjobs
+
+ minjobs => 10, # default: maxjobs / 2
+
+The "minjobs" field specified the B<minimum> number of jobs that can be
+waiting in the queue to be handled before job submission is allowed again
+(job throttling).
+
+If job throttling is active and the "minjobs" field is not specified, then
+half of the "maxjobs" value will be assumed.
 
 =back
 
@@ -1373,6 +1498,15 @@ If you want to wait for the job to be finished, use the L<result> method.
 
 The "todo" method returns the number of L<job>s that are still left to be
 done.
+
+=head2 results
+
+ $results = $pool->results;
+ @result = $pool->results;
+
+The "results" method returns the jobids of which there are results available
+and which have not yet been fetched with L<result>.  Returns the number of
+results available in scalar context.
 
 =head2 add
 
@@ -1530,11 +1664,20 @@ The following methods only make sense inside the "pre", "do", "post",
 
 =head2 self
 
- $pool = Thread::Pool->self;
+ $self = Thread::Pool->self;
 
 The class method "self" returns the object to which this thread belongs.
 It is available within the "pre", "do", "post", "stream" and "monitor"
 subroutines only.
+
+=head2 monitor
+
+ $monitor = Thread::Pool->monitor;
+
+The class method "monitor" returns the Thread::Queue::Any::Monitored object
+that is associated with the pool.  It is available only if the "monitor"
+field was specified in L<new>.  And then only within the "pre", "do", "post",
+"stream" and "monitor" subroutines only.
 
 =head2 remove_me
 
@@ -1547,7 +1690,7 @@ be removed.
 
 =head2 jobid
 
- Thread::Pool->jobid;
+ $jobid = Thread::Pool->jobid;
 
 The "jobid" class method only makes sense within the "do" subroutine in
 streaming mode.  It returns the job ID value of the current job.  This can
@@ -1590,13 +1733,73 @@ specified values using C<Storable>.  This allows for great flexibility at
 the expense of more CPU usage.  It also limits what can be passed, as e.g.
 code references can B<not> be serialized and therefore not be passed.
 
-=head1 BUGS
-
-For some still unexplained reason, calling 
-
 =head1 EXAMPLES
 
-For now the only examples available, are those found in the "t" directory.
+There is currently one example.
+
+=head2 simple asynchronous log file resolving filter
+
+This is an example of a very simple asynchronous log file resolver filter.
+
+Because the IP-number to domain name translation is dependent on external
+DNS servers, it can take quite some (wallclock) time before a response is
+returned by the C<gethostbyaddr> function.  In a single threaded environment,
+a single bad DNS server can severely slow down the resolving process.  In a
+threaded environment, you can have one thread waiting for a slow DNS server
+while other threads are able to obtain answers in the mean time.
+
+This example uses a shared hash to keep results from DNS server responses,
+so that if an IP-number was attempted to be resolved once (either successfully
+or unsuccessfully), it will not be attempted again: instead the value from the
+hash will be assumed.
+
+ # Using Thread::Pool by itself is enough, no "use threads;" needed
+ # Initialize the shared hash with IP-numbers and their results
+
+ use Thread::Pool;
+ my %resolved : shared;
+
+ # Create the pool of threads
+
+ my $pool = Thread::Pool->new(
+  {
+   workers => 10,
+   do => \&do,
+   monitor => \&monitor,
+  }
+ );
+
+ # Submit each line as a job to the pool
+
+ $pool->job( $_ ) while <>;
+
+ #--------------------------------------------------------------------
+ # Handle a single job
+ #  IN: 1 log line to resolve
+ # OUT: 1 resolved log line
+
+ # Substitute the IP-number at the start with the name or with the original
+ # Return the adapted value
+
+ sub do {
+   $_[0] =~ s#^(\d+\.\d+\.\d+\.\d+)#
+    $resolved{$1} ||= gethostbyaddr( pack( 'C4',split(/\./,$1)),2 ) || $1#e;
+   $_[0];
+ } #do
+
+ #--------------------------------------------------------------------
+ # Output the results in the order they were submitted
+ #  IN: 1 resolved log line
+
+ sub monitor { print $_[0] } #monitor
+
+This is a very simple filter.  There are a number of drawbacks to this
+simplistic approach.  They are:
+
+ - many more jobs can be added than workers can handle
+ - multiple threads can be looking up the same IP-number at the same time
+
+but these _can_ be fixed.  But they are left as an excercise to the reader.
 
 =head1 AUTHOR
 
