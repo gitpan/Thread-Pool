@@ -1,0 +1,26 @@
+0.02	13 July 2002
+	Added initial version of test-suite.
+
+	Added initial version of the documentation.
+
+	Added copyright info to pod.
+
+	Name change threads::shared:: -> Thread:: caused this module to be
+	renamed to the Thread:: namespace.  Per Dan Sugalski's suggestion,
+	the name became Thread::Pool.
+
+	Dave Rolsky suggested that "hire" and "fire" were too cutesy.  And I
+	figured that "fire" could be misinterpreted as "fire up a thread"
+	rather than retire.  Therefore the following changes were made:
+
+	 hire		-> add
+	 fire		-> remove
+	 fired		-> removed
+	 hired		(deleted, moved functionality to "workers")
+
+	I also changed "result_nb" to "result_dontwait", as that is a better
+	description of what it does (who knows that "nb" stands for
+	"non-blocking" and then knows what it means?).
+
+0.01	12 July 2002
+	First version as threads::farm.
