@@ -14,6 +14,8 @@ my $pool;
 
 BEGIN { use_ok('Thread::Pool') }
 
+my $t0 = () = threads->list; # remember number of threads now
+
 my @list : shared;
 my $count : shared = 0;
 my $threads = 5;
@@ -55,7 +57,7 @@ foreach my $optimize (qw(cpu memory)) {
   cmp_ok( $count,'==',$times,		'check count' );
 
   $pool->shutdown;
-  cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads' );
+  cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads' );
   cmp_ok( scalar($pool->workers),'==',0,	'check number of workers' );
   cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed' );
   cmp_ok( $pool->todo,'==',0,		'check # jobs todo' );

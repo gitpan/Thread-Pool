@@ -1,3 +1,10 @@
+0.27    1 September 2002
+        Increased dependency on Thread::Conveyor to 0.10, to ensure we have
+        the latest and the best.
+
+	Adapted test-suite to account correctly for the extra thread that is
+	created by the new dependency of Thread::Conveyor on Thread::Tie.
+
 0.26	30 August 2002
         Changed all modules to use AutoLoader to defer loading of necessary
 	subroutines to when they are actually needed.  This should save

@@ -13,6 +13,8 @@ diag( "Test job throttling" );
 
 BEGIN { use_ok('Thread::Pool') }
 
+my $t0 = () = threads->list; # remember number of threads now
+
 my $check;
 my $format = '%5d';
 my @list;
@@ -99,7 +101,7 @@ $pool->workers( $t+$t );
 cmp_ok( scalar($pool->workers),'==',$t+$t, 'check number of workers' );
 
 $pool->shutdown;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads' );
+cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers' );
 cmp_ok( scalar($pool->removed),'==',$t+$t, 'check number of removed' );
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo' );

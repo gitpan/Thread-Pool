@@ -9,7 +9,7 @@ WriteMakefile (
   ABSTRACT	=> 'group of threads for performing similar jobs') : (),
  VERSION_FROM	=> 'lib/Thread/Pool.pm',
  PREREQ_PM	=> {
-                    'Thread::Conveyor' => '0.07',
-                    'Thread::Conveyor::Monitored' => '0.07',
+                    'Thread::Conveyor' => '0.10',
+                    'Thread::Conveyor::Monitored' => '0.08',
                    },
 );

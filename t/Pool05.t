@@ -12,6 +12,8 @@ diag( "Test abort() functionality" );
 
 BEGIN { use_ok('Thread::Pool') }
 
+my $t0 = () = threads->list; # remember number of threads now
+
 my @list : shared;
 my $threads = 10;
 my $times = 100;
@@ -40,7 +42,7 @@ foreach my $optimize (0,1) {
   @list = ('');
   $pool->job( $_ ) foreach 1..$times;
   $pool->abort;
-  cmp_ok( scalar(()=threads->list),'==',$optimize,'check for remaining threads, #1' );
+  cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads, #1' );
   cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #1' );
   cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #1' );
 
@@ -50,12 +52,12 @@ foreach my $optimize (0,1) {
   ok( $done >= 0 and $done <= $times,	'check # jobs done, #1' );
 
   $pool->add( 5 );
-  cmp_ok( scalar(()=threads->list),'==',5+$optimize,'check for remaining threads, #2' );
+  cmp_ok( scalar(()=threads->list),'==',5+$t0,'check for remaining threads, #2' );
   cmp_ok( scalar($pool->workers),'==',5,	'check number of workers, #2' );
   cmp_ok( scalar($pool->removed),'==',$threads, 'check number of removed, #2' );
 
   $pool->shutdown;
-  cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #3' );
+  cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads, #3' );
   cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #3' );
   cmp_ok( scalar($pool->removed),'==',$threads+5, 'check number of removed, #3' );
   cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #2' );

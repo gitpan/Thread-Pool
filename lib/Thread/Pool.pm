@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION = '0.26';
+our $VERSION = '0.27';
 use strict;
 
 # Make sure we only load stuff when we actually need it

@@ -14,6 +14,8 @@ diag( "Test monitoring to file with checkpointing" );
 BEGIN { use_ok('Thread::Pool') }
 cmp_ok( Thread::Pool->frequency( 10 ),'==',10,	'check default frequency' );
 
+my $t0 = () = threads->list; # remember number of threads now
+
 my $check;
 my $format = '%5d';
 my @list;
@@ -79,7 +81,7 @@ foreach ( 1..$times ) {
 }
 
 $pool->shutdown;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #1' );
+cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads, #1' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #1' );
 cmp_ok( scalar($pool->removed),'==',$t, 'check number of removed, #1' );
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #1' );
@@ -106,7 +108,7 @@ $pool->workers( $t+$t);
 cmp_ok( scalar($pool->workers),'==',$t+$t, 'check number of workers, #2' );
 
 $pool->shutdown;
-cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #2' );
+cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads, #2' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #2' );
 cmp_ok( scalar($pool->removed),'==',$t+$t, 'check number of removed, #2' );
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #2' );

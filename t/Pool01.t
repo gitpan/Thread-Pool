@@ -11,6 +11,9 @@ use Test::More tests => 39;
 diag( "Test general functionality" );
 
 BEGIN { use_ok('Thread::Pool') }
+
+my $t0 = () = threads->list; # remember number of threads now
+
 my $pool = pool();
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 
@@ -89,7 +92,7 @@ $pool->shutdown;
 #foreach (threads->list) {
 #  warn "Thread #".$_->tid." still alive\n";
 #}
-cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
+cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads' );
 
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #6' );
 cmp_ok( scalar($pool->removed),'==',10,	'check number of removed, #3' );
@@ -127,7 +130,7 @@ cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #4' );
 cmp_ok( $pool->done,'==',3,		'check # jobs done, #4' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
 cmp_ok( scalar($pool->removed),'==',1,	'check number of removed, #4' );
-cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
+cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads' );
 
 $notused = $pool->notused;
 ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );
