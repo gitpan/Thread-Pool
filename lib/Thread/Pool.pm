@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.20';
+our $VERSION : unique = '0.21';
 use strict;
 
 # Make sure we can do monitored belts
@@ -141,27 +141,25 @@ sub job {
 
     if (my $maxjobs = $self->{'maxjobs'}) {
 	my $halted = $self->{'halted'};
+        lock( $belt );
         if ($$halted) {
-            lock( @$belt );
-            cond_wait( @$belt ) while $$halted;
-            cond_broadcast( @$belt );
+            cond_wait( $belt ) while $$halted;
+            cond_broadcast( $belt );
 
 #  Elseif there are now too many jobs in the belt
 #   Die now if there are no workers available to ever lower the number of jobs
-#   Lock the job belt
 #   Set the job submission halted flag
 #   Wake up any threads that are waiting for jobs to be handled
 #   Wait until the halt flag is reset
 #   Notify the rest of the world again
 
         } elsif (@$belt > $maxjobs) {
-	    die "Too many jobs submitted while no workers available"
-	     unless $self->workers;
-	    lock( @$belt );
-	    $$halted = 1;
-            cond_broadcast( @$belt );
-            cond_wait( @$belt ) while $$halted;
-            cond_broadcast( @$belt );
+            die "Too many jobs submitted while no workers available"
+             unless $self->workers;
+            $$halted = 1;
+            cond_broadcast( $belt );
+            cond_wait( $belt ) while $$halted;
+            cond_broadcast( $belt );
         }
     }
 
@@ -313,7 +311,7 @@ sub results {
 # Return the keys from the hash
 
     my $result = shift->{'result'};
-    lock( %$result );
+    lock( $result );
     keys %$result;
 } #results
 
@@ -410,13 +408,14 @@ sub add {
 #  Save the tid in the local list
 #  Save the tid in the global list
 
-    lock( $workers );
-    foreach (1..$add) {
-        my $thread = threads->new( $dispatcher,$self,@_ );
-	my $tid = $thread->tid;
-        push( @tid,$tid );
-        push( @{$workers},$tid );
-    }
+    {lock( $workers );
+     foreach (1..$add) {
+         my $thread = threads->new( $dispatcher,$self,@_ );
+         my $tid = $thread->tid;
+         push( @tid,$tid );
+         push( @{$workers},$tid );
+     }
+    } #$workers
 
 # Reset shut down flag if we added any worker threads
 # Return the thread id(s) of the worker threads created
@@ -788,18 +787,18 @@ sub _random {
         $dont_set_result = undef;
 
 #  If there is amount of job limitation active
+#   Lock access to the job belt
 #   If job submission is halted
 #    If current number of jobs is less than minimum number of jobs
-#     Lock access to the job belt
 #     Reset the halted flag, allow job submissions again
 #     Wake up all of the other threads to allow them to submit again
 
         if ($maxjobs) {
+            lock( $belt );
             if ($$halted) {
                 if (@$belt <= $minjobs) {
-                    lock( @$belt );
                     $$halted = 0;
-                    cond_broadcast( @$belt );
+                    cond_broadcast( $belt );
                 }
             }
         }
@@ -891,18 +890,18 @@ sub _stream {
         $dont_set_result = undef;
 
 #  If there is amount of job limitation active
+#   Lock access to the job belt
 #   If job submission is halted
 #    If current number of jobs is less than minimum number of jobs
-#     Lock access to the job belt
 #     Reset the halted flag, allow job submissions again
 #     Wake up all of the other threads to allow them to submit again
 
         if ($maxjobs) {
+            lock( $belt );
             if ($$halted) {
                 if (@$belt <= $minjobs) {
-                    lock( @$belt );
                     $$halted = 0;
-                    cond_broadcast( @$belt );
+                    cond_broadcast( $belt );
                 }
             }
         }

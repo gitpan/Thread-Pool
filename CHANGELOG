@@ -1,3 +1,8 @@
+0.21	29 July 2002
+	Hopefully fixed the last deadlock issues with regards to job
+	throttling.  Thread::Pool::Resolve finally gets through its test-suite
+	always.
+
 0.20	26 July 2002
 	Fixed some documentation nits.
 
