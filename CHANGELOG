@@ -1,3 +1,38 @@
+0.13	17 July 2002
+	Testing on large numbers of threads and/or jobs keeps failing
+	indeterminately.  Lowered the number of tests to be able to get
+	the module out there for testing on other machines.
+
+	No longer passes the Thread::Pool object to the "do", "pre" and
+	"post" routine.  This to conform to the way Thread::Queue::Monitored
+	works.  If the object is needed, the "self" class object should be
+	called.  This change should also speed up things a bit.
+
+        Added class method "self" for use within the "pre", "do", "post",
+	"stream" or "monitor" routine.  It returns the object they're
+	working for.
+	
+	The same "pre" routine is now also passed to the internal "monitor"
+	object.  If you really want to have a different "pre" routine, then
+	you can create a seperate Thread::Queue::Any::Monitored object and
+	use a "stream" routine to fill that monitored queue.
+
+	Changed the functionality of the "pre" routine to not save any
+	of the returned values.  It makes much more sense for the "pre"
+	routine to set either lexical or global variables that would be
+	automatically accessible to the "do" and "post" routine by virtue
+	of the fact that they have their own memory space to play with.
+	Adapted the test-suite accordingly.
+
+	Added support for "monitor" keyword in "new" method.  Allows you to
+	specify a streaming mode in which the stream is handled by a single
+	monitoring thread rather than by each thread themselves.  Courtesy
+	of the new Thread::Queue::Any::Monitored module.
+
+	Fixed problem with warning being issued when starting the object.
+	Caused by the originating thread id value not being set for the
+	originating thread itself.
+
 0.12	16 July 2002
 	Added method "waitfor" as a shortcut for using "job" and "result".
 

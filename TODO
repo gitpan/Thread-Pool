@@ -1,3 +1,15 @@
+Add high water/ low water mark functionality for throttling jobs being
+submitted.  So, if number of jobs is larger than high, job() will block until
+number of jobs is lower than low.
+
+Change add "process" functionality, a different thread handling streamed
+results.  Possibly by queuing results using the Queue::Any and having another
+single thread reading off, bypassing all sorts of issues with locking the
+file system.
+
+Add Thread::Pool::LogResolve functionality.  Possibly add an IO-layer for
+it.  Think about a solution for the problem
+
 Add test-suite for "abort" functionality.
 
 Add test-suite for submitting jobs from different threads to the same

@@ -56,8 +56,7 @@ my $jobid3 = $pool->remove;
 cmp_ok( $jobid3,'==',3,			'check third jobid' );
 
 @result = $pool->result( $jobid3 );
-my @pre = @{shift @result};
-is( join('',@pre,'/',@result),'cba/abc', 'check result remove' );
+is( join('',@result),'abcabc',		'check result remove' );
 
 cmp_ok( scalar($pool->workers),'==',4,	'check number of workers, #5' );
 cmp_ok( scalar($pool->removed),'==',6,	'check number of removed, #2' );
@@ -108,20 +107,11 @@ cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
 $notused = $pool->notused;
 ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );
 
-sub pre {
-  my $self = shift;
-  reverse @_;
-}
+sub pre { reverse @_ }
 
 sub do {
-  my $self = shift;
-  my @pre = $self->pre;
-  $self->remove_me if $_[0] eq 'remove_me';
+  Thread::Pool->self->remove_me if $_[0] eq 'remove_me';
   reverse @_;
 }
 
-sub post {
-  my $self = shift;
-  my @pre = $self->pre;
-  \@pre,@_;
-}
+sub post { (@_,@_) }

@@ -7,3 +7,4 @@ Makefile.PL
 lib/Thread/Pool.pm
 t/Pool01.t
 t/Pool02.t
+t/Pool03.t
