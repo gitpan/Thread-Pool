@@ -7,7 +7,7 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle;
-use Test::More tests => 1 + (2*5*10);
+use Test::More tests => 1 + (2*5*12) + 9;
 
 diag( "Test job throttling" );
 
@@ -30,14 +30,12 @@ my @amount = (
 
 
 sub pre {
-  return unless Thread::Pool->monitor;
-  open( $handle,">$_[0]" ) or die "Could not open file $_[0]: $!";
+  ok( open( $handle,">$_[0]" ),		'open monitoring file' );
   $handle->autoflush;
 }
 
 sub post {
-  return unless Thread::Pool->monitor;
-  close( $handle );
+  ok( close( $handle ),			'close monitoring file' );
 }
 
 sub do { sleep( rand(2) ); sprintf( $format,$_[0] ) }
@@ -52,9 +50,19 @@ _runtest( @{$_},qw(pre do file post) ) foreach @amount;
 diag( qq(*** Test using slower "yield" ***) );
 _runtest( @{$_},qw(pre yield file post) ) foreach @amount;
 
+ok( unlink( $file ) );
 
-unlink( $file );
+my $pool = Thread::Pool->new( {do => \&do, workers => 2} );
+isa_ok( $pool,'Thread::Pool',		'check object type' );
+cmp_ok( $pool->maxjobs,'==',10,		'check maxjobs value, #1' );
+cmp_ok( $pool->minjobs,'==',5,		'check minjobs value, #1' );
 
+cmp_ok( $pool->maxjobs(50),'==',50,	'check maxjobs value, #2' );
+cmp_ok( $pool->minjobs,'==',25,		'check minjobs value, #2' );
+cmp_ok( $pool->minjobs(10),'==',10,	'check minjobs value, #3' );
+
+cmp_ok( $pool->maxjobs(0),'==',0,	'check maxjobs value, #3' );
+cmp_ok( $pool->minjobs,'==',0,		'check minjobs value, #4' );
 
 sub _runtest {
 
@@ -67,6 +75,7 @@ my $pool = Thread::Pool->new(
   pre => $pre,
   do => $do,
   monitor => $monitor,
+  pre_post_monitor_only => 1,
   post => $post,
  },
  $file

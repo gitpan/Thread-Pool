@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.19';
+our $VERSION : unique = '0.20';
 use strict;
 
 # Make sure we can do monitored belts
@@ -47,12 +47,9 @@ sub new {
     die "Must have a subroutine to perform jobs" unless exists $self->{'do'};
 
 # If we're supposed to monitor
-#  Load the appropriate module if not already available
 #  Die now if also attempting to stream
 
     if (exists $self->{'monitor'}) {
-        eval {require Thread::Conveyor::Monitored}
-         unless defined( $Thread::Conveyor::Monitored::VERSION );
         die "Cannot stream and monitor at the same time"
          if exists $self->{ 'stream'};
 
@@ -61,14 +58,15 @@ sub new {
 #  Set the streaming routine that sends to the monitor
 
         $self->_makecoderef( caller().'::',qw(pre monitor post) );
-        @$self{qw(monitorb monitort)} = Thread::Conveyor::Monitored->new(
-         {
-          pre => $self->{'pre'},
-          monitor => $self->{'monitor'},
-          post => $self->{'post'},
-	  exit => $self->{'exit'},
-         },
-	 @_
+        @$self{qw(monitor_belt monitor_thread)} =
+	 Thread::Conveyor::Monitored->new(
+          {
+           pre => $self->{'pre'},
+           monitor => $self->{'monitor'},
+           post => $self->{'post'},
+           exit => $self->{'exit'},
+          },
+          @_
         );
         $self->{'stream'} = \&_have_monitored;
     }
@@ -77,7 +75,7 @@ sub new {
 # Set the auto-shutdown flag unless it is specified already
 # Set the dispatcher to be used if none specified yet
 
-    $self->{'jobbelt'} = Thread::Conveyor->new;
+    $self->{'belt'} = Thread::Conveyor->new;
     $self->{'autoshutdown'} = 1 unless exists $self->{'autoshutdown'};
     $self->{'dispatcher'} ||= $self->{'stream'} ? \&_stream : \&_random;
 
@@ -132,7 +130,7 @@ sub job {
 # Obtain local copy of the job belt
 
     my $self = shift;
-    my $jobbelt = $self->{'jobbelt'};
+    my $belt = $self->{'belt'};
 
 # If there is number of jobs limitation active
 #  Obtain local copy of a reference to the halted flag
@@ -144,9 +142,9 @@ sub job {
     if (my $maxjobs = $self->{'maxjobs'}) {
 	my $halted = $self->{'halted'};
         if ($$halted) {
-            lock( @$jobbelt );
-            cond_wait( @$jobbelt ) while $$halted;
-            cond_broadcast( @$jobbelt );
+            lock( @$belt );
+            cond_wait( @$belt ) while $$halted;
+            cond_broadcast( @$belt );
 
 #  Elseif there are now too many jobs in the belt
 #   Die now if there are no workers available to ever lower the number of jobs
@@ -156,14 +154,14 @@ sub job {
 #   Wait until the halt flag is reset
 #   Notify the rest of the world again
 
-        } elsif (@$jobbelt > $maxjobs) {
+        } elsif (@$belt > $maxjobs) {
 	    die "Too many jobs submitted while no workers available"
 	     unless $self->workers;
-	    lock( @$jobbelt );
+	    lock( @$belt );
 	    $$halted = 1;
-            cond_broadcast( @$jobbelt );
-            cond_wait( @$jobbelt ) while $$halted;
-            cond_broadcast( @$jobbelt );
+            cond_broadcast( @$belt );
+            cond_wait( @$belt ) while $$halted;
+            cond_broadcast( @$belt );
         }
     }
 
@@ -174,7 +172,7 @@ sub job {
     if ($self->{'stream'}) {
         die "Cannot return individual results when streaming"
          if defined( wantarray );
-        $jobbelt->put( $self->_jobid, \@_ );
+        $belt->put( $self->_jobid, \@_ );
 
 # Elseif we want a jobid
 #  Obtain a jobid
@@ -183,14 +181,14 @@ sub job {
 
     } elsif (defined( wantarray )) {
         my $jobid = $self->_jobid;
-        $jobbelt->put( $jobid, \@_ );
+        $belt->put( $jobid, \@_ );
         return $jobid;
 
 # Else (not streaming and not interested in the result)
 #  Put in box without a jobid
 
     } else {
-        $jobbelt->put( \@_ )
+        $belt->put( \@_ )
     }
 } #job
 
@@ -212,7 +210,7 @@ sub waitfor {
 #  IN: 1 instantiated object
 # OUT: 1 number of jobs to be done still
 
-sub todo { shift->{'jobbelt'}->onbelt } #todo
+sub todo { shift->{'belt'}->onbelt } #todo
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -391,16 +389,17 @@ sub add {
 #  Recreate the monitoring thread using the current monitoring belt
 
     @_ = @{Storable::thaw( $self->{'startup'} )};
-    if ($self->{'monitorb'} and not exists( $self->{'monitort'} ) ) {
-        @$self{qw(monitorb monitort)} = Thread::Conveyor::Monitored->new(
-         {
-          pre => $self->{'pre'},
-          monitor => $self->{'monitor'},
-          belt => $self->{'monitorb'},
-          post => $self->{'post'},
-	  exit => $self->{'exit'},
-         },
-	 @_,
+    if ($self->{'monitor_belt'} and not exists( $self->{'monitor_thread'} ) ) {
+        @$self{qw(monitor_belt monitor_thread)} =
+	 Thread::Conveyor::Monitored->new(
+          {
+           pre => $self->{'pre'},
+           monitor => $self->{'monitor'},
+           belt => $self->{'monitor_belt'},
+           post => $self->{'post'},
+           exit => $self->{'exit'},
+          },
+          @_,
         );
     }
 
@@ -456,7 +455,7 @@ sub remove {
     if (defined( wantarray )) {
         foreach (1..$remove) {
             my $jobid = $self->_jobid;
-            $self->{'jobbelt'}->put( 0,$jobid );
+            $self->{'belt'}->put( 0,$jobid );
             push( @jobid,$jobid );
         }
 
@@ -464,7 +463,7 @@ sub remove {
 #  Just indicate we're want to stop as many as specified (without result saving)
 
     } else {
-        $self->{'jobbelt'}->put( 0 ) foreach 1..$remove;
+        $self->{'belt'}->put( 0 ) foreach 1..$remove;
     }
 
 # Return either the first or all of the jobids created
@@ -521,6 +520,38 @@ sub join {
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
+#      2 new maxjobs value (default: no change)
+# OUT: 1 current maxjobs value
+
+sub maxjobs {
+
+# Obtain the object
+# Set the new maxjobs and minjobs value if new value specified
+# Return current value
+
+    my $self = shift;
+    $self->{'minjobs'} = ($self->{'maxjobs'} = shift) >> 1 if @_;
+    $self->{'maxjobs'};
+} #maxjobs
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2 new minjobs value (default: no change)
+# OUT: 1 current minjobs value
+
+sub minjobs {
+
+# Obtain the object
+# Set the new minjobs value if new value specified
+# Return current value
+
+    my $self = shift;
+    $self->{'minjobs'} = shift if @_;
+    $self->{'minjobs'};
+} #minjobs
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
 #      2 new setting of autoshutdown flag
 # OUT: 1 current/new setting of autoshutdown
 
@@ -561,10 +592,10 @@ sub shutdown {
 #  Outloop if there is a real job in the box
 #  Remove the finishing job (amount of workers to remove was too high)
 
-    my $jobbelt = $self->{'jobbelt'};
-    while (my ($jobid) = $jobbelt->peek_dontwait) {
+    my $belt = $self->{'belt'};
+    while (my ($jobid) = $belt->peek_dontwait) {
        last if $jobid;
-       $jobbelt->take;
+       $belt->take;
     }
 
 # If we were streaming
@@ -575,7 +606,7 @@ sub shutdown {
 
     if (my $stream = $self->{'stream'}) {
         my ($streamid,$jobid,$result) = @$self{qw(streamid jobid result)};
-        my @extra = exists $self->{'monitorb'} ? ($self) : ();
+        my @extra = exists $self->{'monitor_belt'} ? ($self) : ();
 	lock( $result );
         my $last = $self->_first_todo_jobid;
 
@@ -599,9 +630,9 @@ sub shutdown {
 #  Remove the thread information from the object
 #  Wait for the thread to finish
 
-    if (my $thread = $self->{'monitort'}) {
-        $self->{'monitorb'}->put( undef );
-	delete( $self->{'monitort'} );
+    if (my $thread = $self->{'monitor_thread'}) {
+        $self->{'monitor_belt'}->put( undef );
+        delete( $self->{'monitor_thread'} );
         $thread->join;
     }
 } #shutdown
@@ -724,23 +755,25 @@ sub set_result {
 sub _random {
 
 # Obtain the object and save it for later self-reference
-# Reset auto-shutdown flag in copy of object in this thread
 # Save the tid of the thread we're in
 # Initialize the number of jobs
 
     my $self = $SELF = shift;
-    $self->{'autoshutdown'} = 0; # only ONE may shutdown in DESTROY!
     my $tid = threads->tid;
     my $jobs = 0;
 
 # Obtain local copies from the hash for faster access
-# Perform the pre actions if there are any
 
-    my ($jobbelt,$do,$post,$result,$removed,$workers,
-        $running,$halted,$maxjobs,$minjobs) =
-     @$self{qw(jobbelt do post result removed workers
-               running halted maxjobs minjobs)};
-    $self->{'pre'}->( @_ ) if exists $self->{'pre'};
+    my ($belt,$do,$post,$result,$removed,$workers,
+        $running,$halted,$maxjobs,$minjobs,$pre_post_monitor_only) =
+     @$self{qw(belt do post result removed workers
+               running halted maxjobs minjobs pre_post_monitor_only)};
+
+# Perform the pre actions if there are any and we're supposed to do it
+# Reset the post routine if we're not supposed to run it
+
+    $self->{'pre'}->( @_ ) if !$pre_post_monitor_only and exists $self->{'pre'};
+    undef( $post ) if $pre_post_monitor_only;
 
 # Initialize the list of parameters returned (we need it outside later)
 # While we're handling requests
@@ -750,7 +783,7 @@ sub _random {
 
     my (@list,$running_now);
     while ($running_now = $$running) {
-        @list = $jobbelt->take;
+        @list = $belt->take;
 	last unless $list[0];
         $dont_set_result = undef;
 
@@ -763,10 +796,10 @@ sub _random {
 
         if ($maxjobs) {
             if ($$halted) {
-                if (@$jobbelt <= $minjobs) {
-                    lock( @$jobbelt );
+                if (@$belt <= $minjobs) {
+                    lock( @$belt );
                     $$halted = 0;
-                    cond_broadcast( @$jobbelt );
+                    cond_broadcast( @$belt );
                 }
             }
         }
@@ -823,25 +856,27 @@ sub _random {
 sub _stream {
 
 # Obtain the object and save for self reference
-# Reset auto-shutdown flag in copy of object in this thread
 # Save the tid of the thread we're in
 # Initialize the number of jobs
 
     my $self = $SELF = shift;
-    $self->{'autoshutdown'} = 0; # only ONE may shutdown in DESTROY!
     my $tid = threads->tid;
     my $jobs = 0;
 
 # Obtain local copies from the hash for faster access
-# Perform the pre actions if there are any
+
+    my ($belt,$do,$post,$result,$stream,$streamid,$removed,
+        $workers,$running,$halted,$maxjobs,$minjobs,$pre_post_monitor_only) =
+     @$self{qw(belt do post result stream streamid removed
+               workers running halted maxjobs minjobs pre_post_monitor_only)};
+
+# Perform the pre actions if there are any and we're allowed to
+# Reset the post routine if we're not supposed to run it
 # Set the extra parameters to be passed to streamer if monitoring
 
-    my ($jobbelt,$do,$post,$result,$stream,$streamid,
-        $removed,$workers,$running,$halted,$maxjobs,$minjobs) =
-     @$self{qw(jobbelt do post result stream streamid
-               removed workers running halted maxjobs minjobs)};
-    $self->{'pre'}->( @_ ) if exists $self->{'pre'};
-    my @extra = exists $self->{'monitorb'} ? ($self) : ();
+    $self->{'pre'}->( @_ ) if !$pre_post_monitor_only and exists $self->{'pre'};
+    undef( $post ) if $pre_post_monitor_only;
+    my @extra = exists $self->{'monitor_belt'} ? ($self) : ();
 
 # Initialize the stuff that we need outside later
 # While we're handling requests, keeping copy of the flag on the fly
@@ -851,7 +886,7 @@ sub _stream {
 
     my (@list,$running_now);
     while ($running_now = $$running) {
-        @list = $jobbelt->take;
+        @list = $belt->take;
         last unless $jobid = $list[0];
         $dont_set_result = undef;
 
@@ -864,10 +899,10 @@ sub _stream {
 
         if ($maxjobs) {
             if ($$halted) {
-                if (@$jobbelt <= $minjobs) {
-                    lock( @$jobbelt );
+                if (@$belt <= $minjobs) {
+                    lock( @$belt );
                     $$halted = 0;
-                    cond_broadcast( @$jobbelt );
+                    cond_broadcast( @$belt );
                 }
             }
         }
@@ -1029,15 +1064,15 @@ sub _first_todo_jobid {
 # Make sure we're the only one handling the job belt
 
     my $self = shift;
-    my $jobbelt = $self->{'jobbelt'};
-    lock( $jobbelt );
+    my $belt = $self->{'belt'};
+    lock( $belt );
 
 # For all the jobs in the belt
 #  De-frost the values in there
 #  Return the job id if it is a job with a job id
 # Return the next job id that is going to be issued
 
-    foreach (@{$jobbelt}) {
+    foreach (@$belt) {
         my @param = @{Storable::thaw( $_ )};
 	return $param[0] if @param == 2;
     }
@@ -1054,7 +1089,7 @@ sub _have_monitored {
 # Put the parameters with at least an empty string to prevent premature exit
 
     my $self = shift;
-    $self->{'monitorb'}->put( @_ ? @_ : ('') );
+    $self->{'monitor_belt'}->put( @_ ? @_ : ('') );
 } #_have_monitored
 
 #---------------------------------------------------------------------------
@@ -1100,38 +1135,42 @@ Thread::Pool - group of threads for performing similar jobs
    pre => sub {shift; print "starting worker with @_\n",
    do => sub {shift; print "doing job for @_\n"; reverse @_},
    post => sub {shift; print "stopping worker with @_\n",
+
    stream => sub {shift; print "streamline with @_\n",
+
    monitor => sub { print "monitor with @_\n",
+   pre_post_monitor_only => 0, # default: 0 = also for "do"
+
    autoshutdown => 1, # default: 1 = yes
+
    workers => 10,     # default: 1
    maxjobs => 50,     # default: 5 * workers
    minjobs => 5,      # default: maxjobs / 2
   },
-  qw(a b c)           # parameters to "pre" subroutine
+  qw(a b c)           # parameters to "pre" and "post" routine
  );
 
  $pool->job( qw(d e f) );              # not interested in result
 
  $jobid = $pool->job( qw(g h i) );
  @result = $pool->result( $jobid );    # wait for result to be ready
- print "Result is @result\n";
 
  $jobid = $pool->job( qw(j k l) );
  @result = $pool->result_dontwait( $jobid ); # do _not_ wait for result
- print "Result is @result\n";          # may be empty when not ready yet
 
  @result = $pool->waitfor( qw(m n o) ); # submit and wait for result
- print "Result is @result\n";
 
  $pool->add;           # add worker(s)
  $pool->remove;        # remove worker(s)
- $pool->workers( 10 ); # set number of workers
+ $pool->workers( 10 ); # adapt number of workers
  $pool->join;          # wait for all removed worker threads to finish
 
  $workers = $pool->workers; 
  $todo    = $pool->todo;
  $removed = $pool->removed;
- print "$workers workers, $todo jobs todo, $removed workers removed\n";
+
+ $pool->maxjobs( 100 );  # adapt or (de-)activate job throttling
+ $pool->minjobs( 10 );
 
  $pool->autoshutdown( 1 ); # shutdown when object is destroyed
  $pool->shutdown;          # wait until all jobs done
@@ -1144,14 +1183,15 @@ Thread::Pool - group of threads for performing similar jobs
 
 =head1 DESCRIPTION
 
-                    *** A note of CAUTION ***
+                  *** A note of CAUTION ***
 
- This module only functions on Perl versions 5.8.0-RC3 and later.
- And then only when threads are enabled with -Dusethreads.  It is
- of no use with any version of Perl before 5.8.0-RC3 or without
- threads enabled.
+ This module only functions on Perl versions 5.8.0 and later.
+ And then only when threads are enabled with -Dusethreads.
+ It is of no use with any version of Perl before 5.8.0 or
+ without threads enabled.
 
-                    *************************
+                  *************************
+
 The Thread::Pool allows you to set up a group of (worker) threads to execute
 a (large) number of similar jobs that need to be executed asynchronously.  The
 routine that actually performs the job (the "do" routine), must be specified
@@ -1191,7 +1231,9 @@ The following class methods are available.
    post => sub { print "stopping with @_\n",     # default: none
 
    stream => sub { print "streamline with @_\n", # default: none
+
    monitor => sub { print "monitor with @_\n",   # default: none
+   pre_post_monitor_only => 0, # default: 0 = also for "do"
 
    autoshutdown => 1, # default: 1 = yes
 
@@ -1282,7 +1324,8 @@ The specified subroutine should expect the following parameters to be passed:
  1..N  any additional parameters that were passed with the call to L<new>.
 
 You can determine whether the "pre" routine is called for a new worker thread
-or for a monitoring thread by checking C<caller()> inside the "pre" routine.
+or for a monitoring thread by checking the L<self> or L<monitor> class method
+inside the "pre" routine.
 
 =item post
 
@@ -1313,6 +1356,10 @@ The specified subroutine should expect the following parameters to be passed:
 Any values that are returned by this subroutine after closing down the thread,
 are accessible with the L<result> method, but only if the thread was
 L<removed> and a job ID was requested.
+
+You can determine whether the "post" routine is called for a new worker thread
+or for a monitoring thread by checking the L<self> or L<monitor> class method
+inside the "post" routine.
 
 =item stream
 
@@ -1378,6 +1425,21 @@ results have to be passed between threads, and therefore be frozen and thawed
 with L<Storable>.  If you can handle the streaming from different threads,
 it is probably wiser to use the "stream" routine feature.
 
+=item pre_post_monitor_only
+
+ pre_post_monitor_only => 1, # default 0
+
+The "pre_post_monitor_only" field only makes sense if a "monitor" routine
+is specified.  If specified with a true value, indicates that the "pre" and
+"post" routines (if specified) should only be called for the "monitor"
+routine only and B<not> for the "do" routine.  Otherwise, the same "pre" and
+"post" routine will be called for both the "do" as well as the "monitor"
+routine.
+
+When the "pre" and "post" routine are called for the "do" subroutine, the
+L<self> class method returns the Thread::Pool object (which it doesn't do
+when called in the "monitor" routine).
+
 =item autoshutdown
 
  autoshutdown => 0, # default: 1
@@ -1408,7 +1470,7 @@ to change the number of workers later.
 The "maxjobs" field specifies the B<maximum> number of jobs that can be sitting
 on the belt to be handled (job throttling).  If a new L<job> submission
 would exceed this amount, job submission will be halted until the number of
-jobs waiting to be handled as become at least as low as the amount specified
+jobs waiting to be handled has become at least as low as the amount specified
 with the "minjobs" field.
 
 If the "maxjobs" field is not specified, an amount of 5 * the number of
@@ -1416,6 +1478,9 @@ worker threads will be assumed.  If you do not want to have any job throttling,
 you can specify the value "undef" for the field.  But beware!  If you do not
 have job throttling active, you may wind up using excessive amounts of memory
 used for storing all of the job submission information.
+
+The L<maxjobs> method can be called to change the job throttling settings
+during the lifetime of the object.
 
 =item minjobs
 
@@ -1427,6 +1492,9 @@ waiting on the belt to be handled before job submission is allowed again
 
 If job throttling is active and the "minjobs" field is not specified, then
 half of the "maxjobs" value will be assumed.
+
+The L<minjobs> method can be called to change the job throttling settings
+during the lifetime of the object.
 
 =back
 
@@ -1577,6 +1645,40 @@ there are not enough worker threads available, new worker threads will be
 L<add>ed.
 
 The return value is the current number of worker threads.
+
+=head2 maxjobs
+
+ $pool->maxjobs( 100 );
+ $maxjobs = $pool->maxjobs;
+
+The "maxjobs" method returns the maximum number of jobs that can be on the
+belt before job throttling sets in.  The input value, if specified,
+specifies the new maximum number of jobs that may be on the belt.  Job
+throttling will be switched off if the value B<0> is specified.
+
+Specifying the "maxjobs" field when creating the pool object with L<new> is
+equivalent to calling this method.
+
+The L<minjobs> method can be called to specify the minimum number of jobs
+that must be on the belt before job submission is allowed again after reaching
+the maximum number of jobs.  By default, half of the "maxjobs" value is
+assumed.
+
+=head2 minjobs
+
+ $pool->minjobs( 50 );
+ $minjobs = $pool->minjobs;
+
+The "minjobs" method returns the minimum number of jobs that must be on the
+belt before job submission is allowed again after reaching the maximum number
+of jobs.  The input value, if specified, specifies the new minimum number of
+jobs that must be on the belt.
+
+Specifying the "minjobs" field when creating the pool object with L<new> is
+equivalent to calling this method.
+
+The L<maxjobs> method can be called to set the maximum number of jobs that
+may be on the belt before job submission will be halted.
 
 =head2 join
 
@@ -1848,11 +1950,11 @@ we're only showing that.
       return;
 
  # Else (first time this IP number is encountered)
- #  Create a shared hash with the rest of the line keyed to the jobid
+ #  Create a empty shared hash
  #  Save a reference to the hash in the todo hash as info for this IP number
 
     } else {
-      my %hash : shared = (Thread::Pool->jobid => $line);
+      my %hash : shared;
       $resolved{$ip} = \%hash;
     }
    } #%resolved
@@ -1868,12 +1970,12 @@ we're only showing that.
  # Make sure we're the only one accessing the resolved hash (rest of this sub)
  # Set the results for all the lines with this IP number
  # Remove the todo hash and replace by domain or blank string if unresolvable
- # Make sure we don't set this result (it was set from the todo hash)
+ # Return the result for this job
 
    lock( %resolved );
    $pool->set_result( $_,$domain.$todo->{$_} ) foreach keys %{$todo};
-   $resolved{$ip} = $domain eq $ip ? '' : $domain;
-   Thread::Pool->dont_set_result;
+   $resolved{$ip} = $domain eq $ip ? undef : $domain;
+   $domain.$line;
  } #do
 
 =head1 AUTHOR

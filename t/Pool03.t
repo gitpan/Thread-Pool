@@ -7,7 +7,7 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle; # needed, cause autoflush method doesn't load it
-use Test::More tests => 1 + (2*5*17);
+use Test::More tests => 1 + (2*5*21);
 
 diag( "Test monitoring to file" );
 
@@ -30,13 +30,13 @@ my @amount = (
 
 
 sub pre {
-  return unless Thread::Pool->monitor;
-  open( $handle,">$_[0]" ) or die "Could not open file $_[0]: $!";
+  return if Thread::Pool->self;
+  ok( open( $handle,">$_[0]" ),		'open monitoring file' );
 }
 
 sub post {
   return unless Thread::Pool->monitor;
-  close( $handle );
+  ok( close( $handle ),			'close monitoring file' );
 }
 
 sub do { sprintf( $format,$_[0] ) }

@@ -1,8 +1,26 @@
+0.20	26 July 2002
+	Fixed some documentation nits.
+
+	Removed autoshutdown resetting hack in dispatcher routines: not needed
+	anymore because of the CLONE check.
+
+	25 July 2002
+	Added "maxjobs" and "minjobs" methods, so that job throttling can be
+	adapted on the fly.  Added documentation and adapted test-suite.
+
+	Added support for the "pre_post_monitor_only" field, which allows the
+	"pre" and "post" routine to only be executed for the "monitor" routine.
+	Added tests and documentation for it also.
+
+	Removed conditional Thread::Conveyor::Monitored loading code.  Since
+	Thread::Conveyor::Monitored is a prerequisite now, it was not necessary
+	anymore.
+
 0.19	25 July 2002
 	Made $VERSION have the : unique attribute to save memory.
 
 	Removed stray "use Carp" that was left behind from some debugging.
-	rearranged -use-s to minimize what is exactly really needed.  Adapted
+	Rearranged -use-s to minimize what is really needed exactly.  Adapted
 	Makefile.PL to now also depend on Thread::Conveyor::Monitored.
 
 	Fixed problem in "shutdown" which would sometimes put too many stop
@@ -23,7 +41,7 @@
 	Finally (hopefully) fixed problems with deadlocking.  It seems that
 	accessing unlocked shared arrays and hashes may cause deadlocking
 	issues also because locks are happening at the C-level.  Will
-	investigate later.
+	investigate later.  Job throttling now considered beta.
 
 0.17	22 July 2002
 	Added support for job throttling by the "maxjobs" and "minjobs" field
