@@ -1,7 +1,11 @@
 README for Thread::Pool
 
 Create a group of threads to perform similar jobs, without having to start
-and stop a thread for each job.
+and stop a thread for each job.  It is intended to be used in situations
+where the completion of similar jobs (e.g. fetching URL's or resolving
+reverse DNS of IP-numbers) may take an indeterminate amount of time.
+Using a pool of threads, these jobs can be executed more or less
+simultaneously, causing the wallclock time of an application to be shortened.
 
                          *** A note of CAUTION ***
 

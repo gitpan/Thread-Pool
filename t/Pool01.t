@@ -6,7 +6,7 @@ BEGIN {				# Magic Perl CORE pragma
 }
 
 use strict;
-use Test::More tests => 39;
+use Test::More tests => 37;
 
 BEGIN { use_ok('Thread::Pool') }
 
@@ -25,8 +25,6 @@ $pool->job( qw(d e f) );	# do a job, for statistics only
 
 my $todo = $pool->todo;
 ok( $todo >= 0 and $todo <= 1,		'check # jobs todo, #1' );
-my $done = $pool->done;
-ok( $done >= 0 and $done <= 1,		'check # jobs done, #1' );
 cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #1' );
 
 my $jobid1 = $pool->job( qw(g h i) );
@@ -47,8 +45,6 @@ cmp_ok( scalar($pool->removed),'==',5,	'check number of removed, #1' );
 
 $todo = $pool->todo;
 ok( $todo >= 0 and $todo <= 3,		'check # jobs todo, #2' );
-$done = $pool->done;
-ok( $done >= 0 and $done <= 3,		'check # jobs done, #2' );
 
 my @result = $pool->result_dontwait( $jobid1 );
 ok( !@result or (join('',@result) eq 'ihg'), 'check result_dontwait' );
@@ -67,6 +63,9 @@ cmp_ok( scalar($pool->workers),'==',4,	'check number of workers, #5' );
 cmp_ok( scalar($pool->removed),'==',6,	'check number of removed, #2' );
 
 $pool->shutdown;
+foreach (threads->list) {
+  warn "Thread #".$_->tid." still alive\n";
+}
 cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads' );
 
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #6' );
@@ -82,6 +81,8 @@ cmp_ok( $jobid4,'==',4,			'check fourth jobid' );
 
 my $tid = $pool->add;
 cmp_ok( $tid,'==',11,			'check tid, #2' );
+my @worker = $pool->workers;
+my @thread = map {$_->tid} threads->list;
 cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #7' );
 
 @result = $pool->result( $jobid4 );
@@ -99,7 +100,8 @@ cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
 cmp_ok( scalar($pool->removed),'==',11,	'check number of removed, #4' );
 
 $pool->shutdown;
-cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads' );
+@thread = map {$_->tid} threads->list;
+cmp_ok( scalar(@thread),'==',0,		'check for remaining threads' );
 
 $notused = $pool->notused;
 ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );

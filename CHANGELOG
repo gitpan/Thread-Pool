@@ -1,3 +1,22 @@
+0.04	15 July 2002
+	Hopefully fixed problem in streaming caused by some stupid thread
+	inertia problem.  Problem was caused by the dispatcher assigning the
+	jobid rather than the "job" method.  Things could get out of sync
+	before the dispatcher was reached.
+
+	Added "join" method to allow intermediate cleanup of removed worker
+	threads.  Fixed up "shutdown" to call "join".
+
+	Internally changed dispatcher system: there are now different
+	dispatchers for streaming and random access mode.
+
+	Method "done" now only counts jobs by removed threads.  Job counts
+	are now kept in local thread space and only made shared when the
+	worker thread is removed.
+
+	Gone back to not detaching threads.  Detached threads cannot be
+	waited for, which is a major PITA.
+
 0.03	14 July 2002
 	Made sure that once the pool is shut down, calling method "shutdown"
 	again will not do anything.  At least not until method "add" is
