@@ -1,3 +1,6 @@
+Check all the signalling going on and see whether they still make sense with
+what I now know about cond_signal and cond_wait.
+
 Investigate whether Data::Dumper could serve as an alternative for Storable.
 
 Add still more examples.

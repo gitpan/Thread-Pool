@@ -1,3 +1,26 @@
+0.23	7 August 2002
+	Added documentation for the "optimize" field (in "new") and method.
+	Thread::Pool now has its own default setting for optimization.
+
+	Adapted writeup of "abort", it now is _the_ way of temporarily
+	shutting down a pool from which it is possible to recover later
+	by adding workers again.
+
+	Finally migrated the complete test-suite: now 1230 tests which take
+	almost 30 minutes on my development box.
+
+	6 August 2002
+	Continued with migration.  Unfortunately, it has become impossible
+	to recover from a shutdown.  Documentation has been adapted to
+	reflect this change, as well as the test-suite.  This also fixed
+	some problems that may have occurred in the test-suite on faster
+	machines.
+
+	5 August 2002
+	Started with migration to new Thread::Conveyor functionality.
+	Adapted requirements in Makefile.PL.  On towards a Thread::Pool and
+	Thread::Pool::Resolve that doesn't eat memory like crazy.
+
 0.22    1 August 2002
 	Fixed problem in random access test-suite that would fail only on
 	faster machines.

@@ -7,7 +7,7 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle;
-use Test::More tests => 1 + (2*5*12) + 9;
+use Test::More tests => 1 + (2*2*5*12) + 9;
 
 diag( "Test job throttling" );
 
@@ -44,11 +44,13 @@ sub yield { threads::yield(); sprintf( $format,$_[0] ) }
 
 sub file { print $handle $_[0] }
 
-diag( qq(*** Test using fast "do" ***) );
-_runtest( @{$_},qw(pre do file post) ) foreach @amount;
+foreach my $optimize (qw(cpu memory)) {
+  diag( qq(*** Test using fast "do" optimized for $optimize ***) );
+  _runtest( $optimize,@{$_},qw(pre do file post) ) foreach @amount;
 
-diag( qq(*** Test using slower "yield" ***) );
-_runtest( @{$_},qw(pre yield file post) ) foreach @amount;
+  diag( qq(*** Test using slower "yield" optimized for $optimize ***) );
+  _runtest( $optimize,@{$_},qw(pre yield file post) ) foreach @amount;
+}
 
 ok( unlink( $file ) );
 
@@ -66,11 +68,12 @@ cmp_ok( $pool->minjobs,'==',0,		'check minjobs value, #4' );
 
 sub _runtest {
 
-my ($t,$times,$pre,$do,$monitor,$post) = @_;
+my ($optimize,$t,$times,$pre,$do,$monitor,$post) = @_;
 diag( "Now testing $t thread(s) for $times jobs" );
 
 my $pool = Thread::Pool->new(
  {
+  optimize => $optimize,
   workers => $t,
   pre => $pre,
   do => $do,
@@ -89,9 +92,6 @@ foreach ( 1..$times ) {
   $check .= sprintf( $format,$_ );
 }
 
-#warn "Waiting for jobs to finish\n";
-#threads::yield() while $pool->results;
-
 diag( "Now testing ".($t+$t)." thread(s) for $times jobs" );
 $pool->job( $_ ) foreach 1..$times;
 
@@ -109,7 +109,7 @@ my $notused = $pool->notused;
 ok( $notused >= 0 and $notused < $t+$t,	'check not-used threads' );
 
 open( my $in,"<$file" ) or die "Could not read $file: $!";
-is( join('',<$in>),$check.$check,	'check second result' );
+is( join('',<$in>),$check.$check,	'check result' );
 close( $in );
 
 } #_runtest

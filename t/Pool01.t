@@ -11,15 +11,7 @@ use Test::More tests => 39;
 diag( "Test general functionality" );
 
 BEGIN { use_ok('Thread::Pool') }
-
-my $pool = Thread::Pool->new(
- {
-  pre		=> 'pre',
-  do		=> 'main::do',
-  post		=> \&post,
- },
- qw(a b c)
-);
+my $pool = pool();
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 
 can_ok( $pool,qw(
@@ -60,15 +52,17 @@ cmp_ok( $jobid1,'==',1,			'check first jobid' );
 my $jobid2 = $pool->job( qw(k l m) );
 cmp_ok( $jobid2,'==',2,			'check second jobid' );
 
-cmp_ok( $pool->add,'==',2,		'check tid of 2nd worker thread' );
+cmp_ok( $pool->add,'>=',2,		'check tid of 2nd worker thread' );
 cmp_ok( scalar($pool->workers),'==',2,	'check number of workers, #2' );
 
 $pool->workers( 10 );
 cmp_ok( scalar($pool->workers),'==',10,	'check number of workers, #3' );
 
 $pool->workers( 5 );
-cmp_ok( scalar($pool->workers),'==',5,	'check number of workers, #4' );
-cmp_ok( scalar($pool->removed),'==',5,	'check number of removed, #1' );
+my $workers = $pool->workers;
+ok( $workers >= 5 and $workers <= 10,	'check number of workers, #4' );
+my $removed = $pool->removed;
+ok( $removed >= 0 and $removed <= 5,	'check number of removed, #1' );
 
 $todo = $pool->todo;
 ok( $todo >= 0 and $todo <= 3,		'check # jobs todo, #2' );
@@ -85,8 +79,10 @@ cmp_ok( $jobid3,'==',3,			'check third jobid' );
 @result = $pool->result( $jobid3 );
 is( join('',@result),'abcabc',		'check result remove' );
 
-cmp_ok( scalar($pool->workers),'==',4,	'check number of workers, #5' );
-cmp_ok( scalar($pool->removed),'==',6,	'check number of removed, #2' );
+$workers = $pool->workers;
+ok( $workers >= 4 and $workers <= 10,	'check number of workers, #5' );
+$removed = $pool->removed;
+ok( $removed >= 0 and $removed <= 6,	'check number of removed, #2' );
 
 $pool->shutdown;
 foreach (threads->list) {
@@ -102,13 +98,15 @@ cmp_ok( $pool->done,'==',3,		'check # jobs done, #3' );
 my $notused = $pool->notused;
 ok( $notused >= 0 and $notused < 10,	'check not-used threads, #1' );
 
-my $jobid4 = $pool->job( 1,2,3 );
-cmp_ok( $jobid4,'==',4,			'check fourth jobid' );
+#================================================================
 
-my $tid = $pool->add;
-cmp_ok( $tid,'==',11,			'check tid, #2' );
+$pool = pool();
+isa_ok( $pool,'Thread::Pool',		'check object type' );
+
+my $jobid4 = $pool->job( 1,2,3 );
+cmp_ok( $jobid4,'==',1,			'check fourth jobid' );
+
 my @worker = $pool->workers;
-my @thread = map {$_->tid} threads->list;
 cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #7' );
 
 @result = $pool->result( $jobid4 );
@@ -118,20 +116,30 @@ is( join('',@result),'321',		'check result after add' );
 is( join('',@result),'onm',		'check result waitfor' );
 
 my $jobid5 = $pool->job( 'remove_me' );
-cmp_ok( $jobid5,'==',6,			'check fifth jobid' );
+cmp_ok( $jobid5,'==',3,			'check fifth jobid' );
 
 my ($result) = $pool->result( $jobid5 );
 is( $result,'remove_me',		'check result remove_me' );
 
 $pool->shutdown;
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #4' );
-cmp_ok( $pool->done,'==',6,		'check # jobs done, #4' );
+cmp_ok( $pool->done,'==',3,		'check # jobs done, #4' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
-cmp_ok( scalar($pool->removed),'==',11,	'check number of removed, #4' );
+cmp_ok( scalar($pool->removed),'==',1,	'check number of removed, #4' );
 cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
 
 $notused = $pool->notused;
 ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );
+
+sub pool { Thread::Pool->new(
+ {
+  pre		=> 'pre',
+  do		=> 'main::do',
+  post		=> \&post,
+ },
+ qw(a b c)
+)
+}
 
 sub pre { reverse @_ }
 

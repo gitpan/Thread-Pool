@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.22';
+our $VERSION : unique = '0.23';
 use strict;
 
 # Make sure we can do monitored belts
@@ -24,9 +24,17 @@ my $remove_me;
 my $jobid;
 my $dont_set_result;
 
+# Set default optimization
+
+my $OPTIMIZE = 'memory';
+
 # Satisfy -require-
 
 1;
+
+#---------------------------------------------------------------------------
+
+# class methods
 
 #---------------------------------------------------------------------------
 #  IN: 1 class with which to create
@@ -49,10 +57,12 @@ sub new {
 # Save the number of workers that were specified now (is changed later)
 # Set the maximum number of jobs if not set already
 # Set the minimum number of jobs if not set already
+# Set the default optimization if none specified
  
     my $add = $self->{'workers'};
     $self->{'maxjobs'} = 5 * ($add || 1) unless exists( $self->{'maxjobs'} );
     $self->{'minjobs'} ||= $self->{'maxjobs'} >> 1;
+    $self->{'optimize'} ||= $OPTIMIZE;
 
 # If we're supposed to monitor
 #  Die now if also attempting to stream
@@ -62,31 +72,37 @@ sub new {
          if exists $self->{ 'stream'};
 
 #  Make sure we have a real coderef for the pre and the monitoring routine
-#  Create a monitoring thread
+#  Create a monitored belt
 #  Set the streaming routine that sends to the monitor
 
         $self->_makecoderef( caller().'::',qw(pre monitor post) );
-        @$self{qw(monitor_belt monitor_thread)} =
-	Thread::Conveyor::Monitored->new(
-          {
-           pre => $self->{'pre'},
-           monitor => $self->{'monitor'},
-           post => $self->{'post'},
-           exit => $self->{'exit'},
-           maxboxes => $self->{'maxjobs'},
-           minboxes => $self->{'minjobs'},
-          },
-          @_
-        );
+        $self->{'monitor_belt'} = Thread::Conveyor::Monitored->new(
+         {
+          optimize => $self->{'optimize'},
+          pre => $self->{'pre'},
+          monitor => $self->{'monitor'},
+          post => $self->{'post'},
+          exit => $self->{'exit'},
+          maxboxes => $self->{'maxjobs'},
+          minboxes => $self->{'minjobs'},
+         },
+	 @_
+	);
         $self->{'stream'} = \&_have_monitored;
     }
 
 # Create a belt for it
+
+    $self->{'belt'} = Thread::Conveyor->new(
+     {
+      optimize => $self->{'optimize'}
+     }
+    );
+
 # Set the auto-shutdown flag unless it is specified already
 # Set the dispatcher to be used if none specified yet
 # Make sure all subroutines are code references
 
-    $self->{'belt'} = Thread::Conveyor->new;
     $self->{'autoshutdown'} = 1 unless exists $self->{'autoshutdown'};
     $self->{'dispatcher'} ||= $self->{'stream'} ? \&_stream : \&_random;
     $self->_makecoderef( caller().'::',qw(pre do post stream dispatcher) );
@@ -120,6 +136,24 @@ sub new {
 } #new
 
 #---------------------------------------------------------------------------
+#  IN: 1 class (ignored)
+#      2 new default optimization type
+# OUT: 1 current default optimization type
+
+sub optimize {
+
+# Set new optimized value if specified
+# Return current optimized value
+
+    $OPTIMIZE = $_[1] if @_ > 1;
+    $OPTIMIZE;
+} #optimize
+
+#---------------------------------------------------------------------------
+
+# instance methods
+
+#---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 #      2..N parameters to be passed for this job
 # OUT: 1 jobid
@@ -127,9 +161,12 @@ sub new {
 sub job { 
 
 # Obtain the object
+# Die now if the pool was shut down
 # Obtain local copy of the job belt
 
     my $self = shift;
+    die "Cannot submit jobs on a pool that has been shut down"
+     if $self->{'shutdown'};
     my $belt = $self->{'belt'};
 
 # If we're streaming
@@ -336,9 +373,12 @@ sub workers {
 sub add {
 
 # Obtain the object
+# Die now if shut down
 # Die now if not in the correct thread
 
     my $self = shift;
+    die "Cannot add workers to a pool that has been shut down"
+     if $self->{'shutdown'};
     $self->_check_originating_thread( 'add' );
 
 # Obtain the number of workers to add
@@ -351,27 +391,7 @@ sub add {
     my ($workers,$dispatcher) = @$self{qw(workers dispatcher)};
     my @tid;
 
-# Thaw the original input parameters to
-# If there is a monitor belt but no thread
-#  Recreate the monitoring thread using the current monitoring belt
-
-    @_ = @{Storable::thaw( $self->{'startup'} )};
-    if ($self->{'monitor_belt'} and not exists( $self->{'monitor_thread'} ) ) {
-        @$self{qw(monitor_belt monitor_thread)} =
-	Thread::Conveyor::Monitored->new(
-          {
-           pre => $self->{'pre'},
-           monitor => $self->{'monitor'},
-           belt => $self->{'monitor_belt'},
-           post => $self->{'post'},
-           exit => $self->{'exit'},
-           maxboxes => $self->{'maxjobs'},
-           minboxes => $self->{'minjobs'},
-          },
-          @_,
-        );
-    }
-
+# Thaw the original input parameters to be sent when a thread is created
 # Make sure we're the only one adding now
 # For all of the workers we want to add
 #  Start the thread with the startup parameters
@@ -379,6 +399,7 @@ sub add {
 #  Save the tid in the local list
 #  Save the tid in the global list
 
+    @_ = @{Storable::thaw( $self->{'startup'} )};
     {lock( $workers );
      foreach (1..$add) {
          my $thread = threads->new( $dispatcher,$self,@_ );
@@ -388,10 +409,8 @@ sub add {
      }
     } #$workers
 
-# Reset shut down flag if we added any worker threads
 # Return the thread id(s) of the worker threads created
 
-    $self->{'shutdown'} = 0;
     return wantarray ? @tid : $tid[0];
 } #add
 
@@ -403,9 +422,12 @@ sub add {
 sub remove {
 
 # Obtain the object
+# Die now if shut down
 # Die now if not in the correct thread
 
     my $self = shift;
+    die "Cannot remove workers from a pool that has been shut down"
+     if $self->{'shutdown'};
     $self->_check_originating_thread( 'remove' );
 
 # Obtain the number of workers to remove
@@ -576,17 +598,17 @@ sub shutdown {
 # Obtain the object
 # Die now if not in the correct thread
 # Return now if are already shut down
-# Mark the object as shut down now (in case we die in here)
 
     my $self = shift;
     $self->_check_originating_thread( 'shutdown' );
     return if $self->{'shutdown'};
-    $self->{'shutdown'} = 1;
 
 # Notify all available active workers after all jobs
+# Mark the object as shut down now (in case we die in here)
 # Join all workers, active or non-active (should be all now)
 
     $self->workers( 0 );
+    $self->{'shutdown'} = 1;
     $self->join( @{$self->{'workers'}} );
 
 # Obtain local copy of the job belt
@@ -627,15 +649,20 @@ sub shutdown {
         $$streamid = $last;
     }
 
-# If there is a monitoring thread
-#  Tell the monitoring to stop
-#  Remove the thread information from the object
-#  Wait for the thread to finish
+# Die now if there are still any jobs to be done
+# And shut the belt down
 
-    if (my $thread = $self->{'monitor_thread'}) {
-        $self->{'monitor_belt'}->put( undef );
-        delete( $self->{'monitor_thread'} );
-        $thread->join;
+    die "Shutting down pool while there are still jobs to be done"
+     if $belt->onbelt;
+    $belt->shutdown;
+
+# If there is a monitoring thread
+#  Tell the monitoring to stop and wait for that thread to finish
+#  Forget we had a monitoring belt
+
+    if (my $mbelt = $self->{'monitor_belt'}) {
+        $mbelt->shutdown;
+	delete( $self->{'monitor_belt'} );
     }
 } #shutdown
 
@@ -1028,21 +1055,21 @@ sub _jobid {
 sub _first_todo_jobid {
 
 # Obtain the object
-# Obtain the reference to the actual job belt
-# Make sure we're the only one handling the job belt
+# Obtain local copy of the belt
+# Obtain the number of boxes
 
     my $self = shift;
-    my $belt = $self->{'belt'}->_belt;
-    lock( $belt );
+    my $belt = $self->{'belt'};
+    my $boxes = $belt->onbelt;
 
 # For all the jobs in the belt
-#  De-frost the values in there
+#  De-frost the values in this box
 #  Return the job id if it is a job with a job id
 # Return the next job id that is going to be issued
 
-    foreach (@$belt) {
-        my @param = @{$belt->_thaw( $_ )};
-	return $param[0] if @param == 2;
+    for (my $i = 0; $i < $boxes; $i++) {
+        my @param = $belt->peek_dontwait( $i );
+        return $param[0] if @param == 2;
     }
     return ${$self->{'jobid'}};
 } #_first_todo_jobid
@@ -1053,11 +1080,9 @@ sub _first_todo_jobid {
 
 sub _have_monitored {
 
-# Obtain the object
 # Put the parameters with at least an empty string to prevent premature exit
 
-    my $self = shift;
-    $self->{'monitor_belt'}->put( @_ ? @_ : ('') );
+    shift->{'monitor_belt'}->put( @_ ? @_ : ('') );
 } #_have_monitored
 
 #---------------------------------------------------------------------------
@@ -1100,6 +1125,8 @@ Thread::Pool - group of threads for performing similar jobs
  use Thread::Pool;
  $pool = Thread::Pool->new(
   {
+   optimize => 'cpu', # default: 'memory'
+
    pre => sub {shift; print "starting worker with @_\n",
    do => sub {shift; print "doing job for @_\n"; reverse @_},
    post => sub {shift; print "stopping worker with @_\n",
@@ -1194,6 +1221,8 @@ The following class methods are available.
 
  $pool = Thread::Pool->new(
   {
+   optimize => 'cpu',                            # default: memory
+
    do => sub { print "doing with @_\n" },        # must have
    pre => sub { print "starting with @_\n",      # default: none
    post => sub { print "stopping with @_\n",     # default: none
@@ -1231,6 +1260,17 @@ to obtain the results of the "post" subroutine.
 The following field B<must> be specified in the hash reference:
 
 =over 2
+
+=item optimize
+
+ optimize => 'cpu', # default: 'memory'
+
+The "optimize" field specifies which implementation of the belt will be
+selected.  Currently there are two choices: 'cpu' and 'memory'.  By default,
+the "memory" optimization will be selected if no specific optmization is
+specified.
+
+You can call the class method L<optimize> to change the default optimization.
 
 =item do
 
@@ -1466,6 +1506,35 @@ during the lifetime of the object.
 
 =back
 
+=head2 optimize
+
+ Thread::Pool->optimize( 'cpu' );
+
+ $optimize = Thread::Pool->optimize;
+
+The "optimize" class method allows you to specify the default optimization
+type that will be used if no "optimize" field has been explicitely specified
+with a call to L<new>.  It returns the current default type of optimization.
+
+Currently two types of optimization can be selected:
+
+=over 2
+
+=item memory
+
+Attempt to use as little memory as possible.  Currently, this is achieved by
+starting a seperate thread which hosts an unshared array.  This uses the
+"Thread::Conveyor::Thread" sub-class.
+
+=item cpu
+
+Attempt to use as little CPU as possible.  Currently, this is achieved by
+using a shared array (using the "Thread::Conveyor::Array" sub-class),
+encapsulated in a hash reference if throttling is activated (then also using
+the "Thread::Conveyor::Throttled" sub-class).
+
+=back
+
 =head1 POOL METHODS
 
 The following methods can be executed on the Thread::Pool object.
@@ -1688,23 +1757,14 @@ It is called automatically when the object is destroyed, unless specifically
 disabled by providing a false value with the "autoshutdown" field when
 creating the pool with L<new>, or by calling the L<autoshutdown> method.
 
-Please note that the "shutdown" method does not disable anything.  It just
-shuts all of the worker threads down.  After a shutdown it B<is> possible
-to add L<job>s, but they won't get done until workers are L<add>ed.
-
 =head2 abort
 
 The "abort" method waits for all worker threads to finish their B<current>
 job, L<remove>s all worker threads, before it returns.  Call the L<shutdown>
 method if you want to wait until all jobs have been done.
 
-Please note that the "abort" method does not disable anything.  It just
-shuts all of the worker threads down.  After an abort it B<is> possible
-to add L<job>s, but they won't get done until workers are L<add>ed.
-
-Also note that any streamed results are B<not> handled.  If you want to
-handle any streamed results, you can call the L<shutdown> method B<after>
-calling the "abort" method.
+You can restart the job handling process after calling "abort" by adding
+L<workers> again.
 
 =head2 done
 
