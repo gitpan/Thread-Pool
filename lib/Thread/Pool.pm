@@ -1,9 +1,11 @@
 package Thread::Pool;
 
+use Carp ();
+
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.17';
+$VERSION = '0.18';
 use strict;
 
 # Make sure we can do threads
@@ -143,12 +145,14 @@ sub job {
 #  If we're currently halted
 #   Lock the job queue
 #   Wait until the halt flag is reset
+#   Notify the rest of the world again
 
     if (my $maxjobs = $self->{'maxjobs'}) {
 	my $halted = $self->{'halted'};
         if ($$halted) {
             lock( @$jobq );
             cond_wait( @$jobq ) while $$halted;
+            cond_broadcast( @$jobq );
 
 #  Elseif there are now too many jobs in the queue
 #   Die now if there are no workers available to ever lower the number of jobs
@@ -156,6 +160,7 @@ sub job {
 #   Set the job submission halted flag
 #   Wake up any threads that are waiting for jobs to be handled
 #   Wait until the halt flag is reset
+#   Notify the rest of the world again
 
         } elsif (@$jobq > $maxjobs) {
 	    die "Too many jobs submitted while no workers available"
@@ -164,6 +169,7 @@ sub job {
 	    $$halted = 1;
             cond_broadcast( @$jobq );
             cond_wait( @$jobq ) while $$halted;
+            cond_broadcast( @$jobq );
         }
     }
 
@@ -889,21 +895,24 @@ sub _stream {
 
 #  Make sure we are the only one doing this
 #  Obtain the current stream ID (so we can use it later)
-#  For all of the results from the stream ID to this thread's job ID
-#   Outloop if there is no result yet
-#   Call the "stream" routine with the result
+#  If there is a result for this job (so we can stream at least one)
+#   Make sure we're the only one accessing the result hash
+#   For all of the results from the stream ID to this thread's job ID
+#    Outloop if there is no result yet
+#    Call the "stream" routine with the result
+#    Remove the result from the hash
 
         {
+         lock( $result );
          lock( $streamid );
          my $i = $$streamid;
-         for (; $i < $jobid; $i++) {
-             last unless exists( $result->{$i} );
-	     {
-	      lock( $result );
-              $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
-              delete( $result->{$i} );
+#         if (exists( $result->{$i} )) {
+             for (; $i < $jobid; $i++) {
+                 last unless exists( $result->{$i} );
+                 $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
+                 delete( $result->{$i} );
              }
-         }
+#         }
 
 #  If all results until this job ID have been streamed
 #   If we need to save this result
@@ -1499,14 +1508,14 @@ If you want to wait for the job to be finished, use the L<result> method.
 The "todo" method returns the number of L<job>s that are still left to be
 done.
 
-=head2 results
-
- $results = $pool->results;
- @result = $pool->results;
-
-The "results" method returns the jobids of which there are results available
-and which have not yet been fetched with L<result>.  Returns the number of
-results available in scalar context.
+#=head2 results
+#
+# $results = $pool->results;
+# @result = $pool->results;
+#
+#The "results" method returns the jobids of which there are results available
+#and which have not yet been fetched with L<result>.  Returns the number of
+#results available in scalar context.
 
 =head2 add
 

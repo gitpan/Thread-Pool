@@ -1,3 +1,9 @@
+0.18	23 July 2002
+	Finally (hopefully) fixed problems with deadlocking.  It seems that
+	accessing unlocked shared arrays and hashes may cause deadlocking
+	issues also because locks are happening at the C-level.  Will
+	investigate later.
+
 0.17	22 July 2002
 	Added support for job throttling by the "maxjobs" and "minjobs" field
 	in the "new" method.  Adapted the "_random" and "_stream" dispatchers

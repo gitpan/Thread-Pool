@@ -39,7 +39,6 @@ can_ok( $pool,qw(
  removed
  result
  result_dontwait
- results
  self
  set_result
  shutdown

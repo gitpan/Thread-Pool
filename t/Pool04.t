@@ -8,7 +8,7 @@ BEGIN {				# Magic Perl CORE pragma
 use strict;
 use IO::Handle;
 our $tests;
-BEGIN {$tests = 1 + (2*3*11)}
+BEGIN {$tests = 1 + (2*5*10)}
 use Test::More tests => $tests;
 
 diag( "Test job throttling" );
@@ -27,12 +27,12 @@ my @list;
 my $file = 'anymonitor';
 my $handle;
 
-# [1,1000],
-# [int(2+rand(8)),int(1+rand(1000))],
 my @amount = (
  [10,0],
  [5,5],
  [10,100],
+ [1,25],
+ [int(5+rand(6)),int(301+rand(700))],
 );
 
 
@@ -47,7 +47,7 @@ sub post {
   close( $handle );
 }
 
-sub do { sprintf( $format,$_[0] ) }
+sub do { sleep( rand(2) ); sprintf( $format,$_[0] ) }
 
 sub yield { threads::yield(); sprintf( $format,$_[0] ) }
 
@@ -87,12 +87,8 @@ foreach ( 1..$times ) {
   $check .= sprintf( $format,$_ );
 }
 
-threads::yield() while $pool->results;
-sleep( 1 ); # Must find a better way to do this
-
-open( my $in,"<$file" ) or die "Could not read $file: $!";
-is( join('',<$in>),$check,		'check first result' );
-close( $in );
+#warn "Waiting for jobs to finish\n";
+#threads::yield() while $pool->results;
 
 diag( "Now testing ".($t+$t)." thread(s) for $times jobs" );
 $pool->job( $_ ) foreach 1..$times;
@@ -110,7 +106,7 @@ cmp_ok( $pool->done,'==',$times+$times,	'check # jobs done' );
 my $notused = $pool->notused;
 ok( $notused >= 0 and $notused < $t+$t,	'check not-used threads' );
 
-open( $in,"<$file" ) or die "Could not read $file: $!";
+open( my $in,"<$file" ) or die "Could not read $file: $!";
 is( join('',<$in>),$check.$check,	'check second result' );
 close( $in );
 
