@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.13';
+$VERSION = '0.14';
 use strict;
 
 # Make sure we can do threads
@@ -54,11 +54,12 @@ sub new {
 #  Create a monitoring thread
 #  Set the streaming routine that sends to the monitor
 
-        $self->_makecoderef( caller().'::',qw(pre monitor) );
+        $self->_makecoderef( caller().'::',qw(pre monitor post) );
         @$self{qw(monitorq monitort)} = Thread::Queue::Any::Monitored->new(
          {
           pre => $self->{'pre'},
           monitor => $self->{'monitor'},
+          post => $self->{'post'},
 	  exit => $self->{'exit'},
          },
 	 @_
@@ -333,7 +334,25 @@ sub add {
     my ($workers,$dispatcher) = @$self{qw(workers dispatcher)};
     my @tid;
 
-# Make sure we're the only one hiring now
+# Thaw the original input parameters to
+# If there is a monitor queue but no thread
+#  Recreate the monitoring thread using the current monitoring queue
+
+    @_ = @{Storable::thaw( $self->{'startup'} )};
+    if ($self->{'monitorq'} and not exists( $self->{'monitort'} ) ) {
+        @$self{qw(monitorq monitort)} = Thread::Queue::Any::Monitored->new(
+         {
+          pre => $self->{'pre'},
+          monitor => $self->{'monitor'},
+          queue => $self->{'monitorq'},
+          post => $self->{'post'},
+	  exit => $self->{'exit'},
+         },
+	 @_,
+        );
+    }
+
+# Make sure we're the only one adding now
 # For all of the workers we want to add
 #  Start the thread with the startup parameters
 #  Obtain the tid of the thread
@@ -342,11 +361,7 @@ sub add {
 
     lock( $workers );
     foreach (1..$add) {
-        my $thread = threads->new(
-         $dispatcher,
-         $self,
-         @{Storable::thaw( $self->{'startup'} )}
-        );
+        my $thread = threads->new( $dispatcher,$self,@_ );
 	my $tid = $thread->tid;
         push( @tid,$tid );
         push( @{$workers},$tid );
@@ -499,11 +514,13 @@ sub shutdown {
 
 # If we were streaming
 #  Obtain the current stream ID, job ID and result hash
+#  Set the extra parameters to be passed to streamer if monitoring
 #  Make sure we're the only one handling results
 #  Obtain last ID to loop through
 
     if (my $stream = $self->{'stream'}) {
         my ($streamid,$jobid,$result) = @$self{qw(streamid jobid result)};
+        my @extra = exists $self->{'monitorq'} ? ($self) : ();
 	lock( $result );
         my $last = $$jobid;
 
@@ -516,17 +533,21 @@ sub shutdown {
         for (my $i = $$streamid; $i < $last; $i++) {
             die "Cannot find result for streaming job $i"
              unless exists( $result->{$i} );
-            $stream->( $self, @{Storable::thaw( $result->{$i} )} );
+            $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
             delete( $result->{$i} );
         }
         $$streamid = $last;
     }
 
 # If there is a monitoring thread
-#  Wait now while there are results to be monitored
+#  Tell the monitoring to stop
+#  Remove the thread information from the object
+#  Wait for the thread to finish
 
-    if (my $queue = $self->{'monitorq'}) {
-        threads::yield() while $queue->pending;
+    if (my $thread = $self->{'monitort'}) {
+        $self->{'monitorq'}->enqueue( undef );
+	delete( $self->{'monitort'} );
+        $thread->join;
     }
 
 # Mark the object as shut down now
@@ -676,10 +697,12 @@ sub _stream {
 
 # Obtain local copies from the hash for faster access
 # Perform the pre actions if there are any
+# Set the extra parameters to be passed to streamer if monitoring
 
     my ($jobq,$do,$post,$result,$stream,$streamid,$removed,$workers,$running) =
      @$self{qw(jobq do post result stream streamid removed workers running)};
     $self->{'pre'}->( @_ ) if exists $self->{'pre'};
+    my @extra = exists $self->{'monitorq'} ? ($self) : ();
 
 # Initialize the stuff that we need outside later
 # While we're handling requests, keeping copy of the flag on the fly
@@ -698,7 +721,7 @@ sub _stream {
 #   And reloop
 
         if ($$streamid == $jobid) {
-            $stream->( $do->( @{$list[1]} ) );
+            $stream->( @extra,$do->( @{$list[1]} ) );
 	    { lock($streamid); ${$streamid} = $jobid+1 }
             $jobs++;
 	    next;
@@ -723,7 +746,7 @@ sub _stream {
              last unless exists( $result->{$i} );
 	     {
 	      lock( $result );
-              $stream->( @{Storable::thaw( $result->{$i} )} );
+              $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
               delete( $result->{$i} );
              }
          }
@@ -736,7 +759,7 @@ sub _stream {
 #   Set the stream ID to the job ID for which there was no result yet
 
          if ($i == $jobid) {
-             $stream->( @param );
+             $stream->( @extra,@param );
              $$streamid = $jobid+1;
          } else {
              $self->_freeze( $jobid, @param );
@@ -887,13 +910,16 @@ sub _thaw {
 } #_thaw
 
 #---------------------------------------------------------------------------
-#  IN: 1..N any parameters returned as a result of a job
+#  IN: 1 instantiate Thread::Pool object
+#      2..N any parameters returned as a result of a job
 
 sub _have_monitored {
 
-# Enqueue the parameters with at least an empty string to prevent prematur exit
+# Obtain the object
+# Enqueue the parameters with at least an empty string to prevent premature exit
 
-    Thread::Pool->self->{'monitorq'}->enqueue( @_ ? @_ : ('') );
+    my $self = shift;
+    $self->{'monitorq'}->enqueue( @_ ? @_ : ('') );
 } #_have_monitored
 
 #---------------------------------------------------------------------------
@@ -906,20 +932,10 @@ sub _have_monitored {
 sub DESTROY {
 
 # Obtain the object
-# If shutdown is required
-#  Do the shutdown
-#  If there was a monitoring thread
-#   Tell the monitoring queue to stop
-#   Wait until it is actually finished
+# Do the shutdown if shutdown is required
 
-    my $self = shift;
-    if ($self->{'autoshutdown'}) {
-        $self->shutdown;
-        if (my $thread = $self->{'monitort'}) {
-            $self->{'monitorq'}->enqueue( undef );
-            $thread->join;
-        }
-    }
+    my ($self) = @_;
+    $self->shutdown if $self->{'autoshutdown'};
 } #DESTROY
 
 #---------------------------------------------------------------------------

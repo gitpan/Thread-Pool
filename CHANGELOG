@@ -1,3 +1,22 @@
+0.14	18 July 2002
+	Fixed problem with monitoring a thread that was't finished when
+	shutdown time was encountered.
+
+	Added support for the new "post" routine in
+	Thread::Queue::Any::Monitored in "new" and "add".  Needed so that
+	e.g. file handles are closed and buffers flushed.
+
+	Small performance improvement in "add" if more than one thread is
+	added: original input parameters are only thawed once.
+
+	Moved shutting down of monitoring thread from DESTROY back to
+	"shutdown".  This makes more sense.  Added code to restart the
+	monitoring thread if necessary in "add".
+
+	Found one problem remaining in shutdown that caused the errors I
+	was seeing yesterday.  I guess 13 _was_ an unlucky number.
+	Re-instated the full test-suite now.
+
 0.13	17 July 2002
 	Testing on large numbers of threads and/or jobs keeps failing
 	indeterminately.  Lowered the number of tests to be able to get

@@ -5,7 +5,10 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-BEGIN {our $tests = 1 + (2*2*19)}
+use Carp ();
+$SIG{__DIE__} = \&Carp::confess;
+
+BEGIN {our $tests = 1 + (2*5*19)}
 use Test::More tests => $tests;
 use strict;
 
@@ -15,16 +18,19 @@ my $check;
 my $format = '%5d';
 my @list : shared;
 
-# [1,10000],
-# [10,1000],
-# [int(1+rand(9)),int(1+rand(10000))],
 my @amount = (
  [10,0],
  [5,5],
+ [1,10000],
+ [10,1000],
+ [int(2+rand(8)),int(1+rand(10000))],
 );
 
 
+diag( qq(*** Test using fast "do" ***) );
 _runtest( @{$_},qw(do memory) ) foreach @amount;
+
+diag( qq(*** Test using slower "yield" ***) );
 _runtest( @{$_},qw(yield memory) ) foreach @amount;
 
 
