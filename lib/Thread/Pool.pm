@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.30';
+$VERSION = '0.31';
 use strict;
 
 # Make sure we only load stuff when we actually need it
@@ -350,6 +350,43 @@ sub result {
 
     Thread::Serialize::thaw( $value );
 } #result
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2 reference to scalar where to store jobid (optional)
+# OUT: 1..N parameters returned from the job
+
+sub result_any {
+
+# Obtain the object
+# Obtain the scalar reference
+# Obtain local copy of result hash reference
+# Make sure we have a value outside the block
+
+    my $self = shift;
+    my $jobidref = shift;
+    my $result = $self->{'result'};
+    my $value;
+
+# Initialize the jobid
+# Lock the result hash
+# Wait there is a result available
+# Obtain the frozen value
+# Remove it from the result hash
+
+    my $jobid;
+    {lock( $result );
+     threads::shared::cond_wait( $result ) until $jobid = (keys %{$result})[0];
+     $value = $result->{$jobid};
+     delete( $result->{$jobid} );
+    } #$result
+
+# Set the jobid if the caller wants to know
+# Return the jobid and the result of thawing
+
+    $$jobidref = $jobid if $jobidref;
+    Thread::Serialize::thaw( $value );
+} #result_any
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -1700,7 +1737,28 @@ The input parameter is the job id as returned from the L<job> assignment.
 The return value(s) are what was returned by the "do" routine.  The meaning
 of the return value(s) is entirely up to you as the developer.
 
+If you want to wait for B<any> job to be finished, use the L<result_any>
+method.
+
 If you don't want to wait for the job to be finished, but just want to see
+if there is a result already, use the L<result_dontwait> method.
+
+=head2 result_any
+
+ @result = $pool->result_any;
+
+ @result = $pool->result_any( \$jobid );
+
+The "result_any" method waits for B<any> job to be finished and returns
+the result of that job.
+
+The optional input parameter is the reference to a scalar variable in which
+the job id will be stored.
+
+The return value(s) are what was returned by the "do" routine.  The meaning
+of the return value(s) is entirely up to you as the developer.
+
+If you don't want to wait for a job to be finished, but just want to see
 if there is a result already, use the L<result_dontwait> method.
 
 =head2 result_dontwait

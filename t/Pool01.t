@@ -7,7 +7,7 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use warnings;
-use Test::More tests => 39;
+use Test::More tests => 42;
 
 $SIG{__DIE__} = sub { require Carp; Carp::confess() };
 $SIG{__WARN__} = sub { require Carp; Carp::confess() };
@@ -38,6 +38,7 @@ can_ok( $pool,qw(
  remove_me
  removed
  result
+ result_any
  result_dontwait
  self
  set_result
@@ -123,15 +124,23 @@ is( join('',@result),'321',		'check result after add' );
 @result = $pool->waitfor( qw(m n o) );
 is( join('',@result),'onm',		'check result waitfor' );
 
-my $jobid5 = $pool->job( 'remove_me' );
+my $jobid5 = $pool->job( 4,5,6 );
 cmp_ok( $jobid5,'==',3,			'check fifth jobid' );
 
-my ($result) = $pool->result( $jobid5 );
+my $foundjobid;
+@result = $pool->result_any( \$foundjobid );
+is( join('',@result),'654',		'check result after add' );
+cmp_ok( $foundjobid,'==',$jobid5,	'check whether job id found ok' );
+
+my $jobid6 = $pool->job( 'remove_me' );
+cmp_ok( $jobid6,'==',4,			'check sixth jobid' );
+
+my ($result) = $pool->result( $jobid6 );
 is( $result,'remove_me',		'check result remove_me' );
 
 $pool->shutdown;
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #4' );
-cmp_ok( $pool->done,'==',3,		'check # jobs done, #4' );
+cmp_ok( $pool->done,'==',4,		'check # jobs done, #4' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
 cmp_ok( scalar($pool->removed),'==',1,	'check number of removed, #4' );
 cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads' );
