@@ -5,11 +5,6 @@ number of jobs is lower than low.
 Add Thread::Pool::LogResolve functionality.  Possibly add an IO-layer for
 it.
 
-Add test-suite for "abort" functionality.
-
-Add test-suite for submitting jobs from different threads to the same
-Thread::Pool object.  Important for use in the worker MPM of Apache 2.0.
-
 Add examples.
 
 Add automatic handling of adding/removing threads a la Apache.

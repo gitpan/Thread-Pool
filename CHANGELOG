@@ -1,3 +1,17 @@
+0.16	21 July 2002
+	Added test-case for testing all of the methods that can be called.
+	Completed the multi-thread job submission test.
+
+	Changed DESTROY to only do something when in the originating thread.
+	Found bug in 5.8.0 that is calling DESTROY just too many times.  Found
+	a way around that by using the CLONE subroutine.  This fixes the
+	segfaults that I have been seeing, that I realize now, were caused
+	by the extra DESTROYs.
+
+	20 July 2002
+	Started the multi-thread job-submitter test-suite.  Ran into
+	segfaults.  Trying to reproduce them in a simpler example now.
+
 0.15	19 July 2002
 	Also fixed "abort" functionality in case there weren't any jobs to
 	do anymore: the worker threads would be blocked on reading the job

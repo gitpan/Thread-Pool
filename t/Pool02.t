@@ -9,6 +9,8 @@ BEGIN {our $tests = 1 + (2*5*19)}
 use Test::More tests => $tests;
 use strict;
 
+diag( "Test streaming to memory" );
+
 BEGIN { use_ok('Thread::Pool') }
 
 my $check;
@@ -18,9 +20,9 @@ my @list : shared;
 my @amount = (
  [10,0],
  [5,5],
- [1,10000],
- [10,1000],
- [int(2+rand(8)),int(1+rand(10000))],
+ [1,1000],
+ [10,100],
+ [int(2+rand(8)),int(1+rand(1000))],
 );
 
 

@@ -6,7 +6,9 @@ BEGIN {				# Magic Perl CORE pragma
 }
 
 use strict;
-use Test::More tests => 38;
+use Test::More tests => 39;
+
+diag( "Test general functionality" );
 
 BEGIN { use_ok('Thread::Pool') }
 
@@ -19,8 +21,32 @@ my $pool = Thread::Pool->new(
  qw(a b c)
 );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
-cmp_ok( scalar($pool->workers),'==',1,	'check number of workers' );
 
+can_ok( $pool,qw(
+ abort
+ add
+ autoshutdown
+ new
+ notused
+ done
+ dont_set_result
+ job
+ jobid
+ join
+ remove
+ remove_me
+ removed
+ result
+ result_dontwait
+ self
+ set_result
+ shutdown
+ todo
+ waitfor
+ workers
+) );
+
+cmp_ok( scalar($pool->workers),'==',1,	'check number of workers' );
 $pool->job( qw(d e f) );	# do a job, for statistics only
 
 my $todo = $pool->todo;

@@ -11,6 +11,8 @@ our $tests;
 BEGIN {$tests = 1 + (2*5*17)}
 use Test::More tests => $tests;
 
+diag( "Test streaming to file" );
+
 BEGIN { use_ok('Thread::Pool') }
 
 SKIP: {
@@ -28,9 +30,9 @@ my $handle;
 my @amount = (
  [10,0],
  [5,5],
- [10,1000],
- [1,10000],
- [int(2+rand(8)),int(1+rand(10000))],
+ [10,100],
+ [1,1000],
+ [int(2+rand(8)),int(1+rand(1000))],
 );
 
 

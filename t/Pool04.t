@@ -8,6 +8,8 @@ BEGIN {				# Magic Perl CORE pragma
 use Test::More tests => 22;
 use strict;
 
+diag( "Test abort() functionality" );
+
 BEGIN { use_ok('Thread::Pool') }
 
 my $check = '';

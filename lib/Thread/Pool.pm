@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.15';
+$VERSION = '0.16';
 use strict;
 
 # Make sure we can do threads
@@ -16,11 +16,13 @@ use threads::shared ();
 use Thread::Queue::Any ();
 use Storable ();
 
+# Number of times this namespace has been CLONEd
 # Allow for self referencing within job thread
 # Flag to indicate whether the current thread should be removed
 # The current jobid, when available
 # Flag to indicate result should _not_ be saved (assume another thread will)
 
+my $cloned = 0;
 my $SELF;
 my $remove_me;
 my $jobid;
@@ -40,10 +42,12 @@ sub new {
 
 # Obtain the class
 # Obtain the hash with parameters and bless it
+# Save the clone level
 # Die now if there is no subroutine to execute
 
     my $class = shift;
     my $self = bless shift,$class;
+    $self->{'cloned'} = $cloned;
     die "Must have a subroutine to perform jobs" unless exists $self->{'do'};
 
 # If we're supposed to monitor
@@ -95,6 +99,7 @@ sub new {
 # Initialize the result hash as shared
 # Initialize the streamid counter as shared
 # Initialize the running flag
+# Initialize the destroyed flag
 
     my @workers : shared;
     my %removed : shared;
@@ -102,11 +107,12 @@ sub new {
     my %result : shared;
     my $streamid : shared = 1;
     my $running : shared = 1;
+    my $destroyed : shared = 0;
 
 # Make sure references exist in the object
 
-    @$self{qw(workers removed jobid result streamid running)} =
-     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running);
+    @$self{qw(workers removed jobid result streamid running destroyed)} =
+     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running,\$destroyed);
 
 # Save a frozen value to the parameters for later hiring
 # Make sure there is an originating id to check against
@@ -894,7 +900,8 @@ sub _check_originating_thread {
 # Die now if in the wrong thread
 
     die qq(Can only call "$_[1]" in the originating thread)
-     unless threads->tid == $_[0]->{'originatingid'};
+#     unless threads->tid == $_[0]->{'originatingid'};
+     unless $_[0]->{'cloned'} == $cloned;
 } #_check_originating_thread
 
 #---------------------------------------------------------------------------
@@ -958,14 +965,23 @@ sub _have_monitored {
 # Standard Perl functionality methods
 
 #---------------------------------------------------------------------------
+#  IN: 1 namespace being cloned (ignored)
+
+sub CLONE { $cloned++ } #CLONE
+
+#---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 
 sub DESTROY {
 
 # Obtain the object
+# Return now if we're in a rogue DESTROY
+# Return now if we're not allowed to run DESTROY
 # Do the shutdown if shutdown is required
 
-    my ($self) = @_;
+    my $self = shift;
+    return if !defined( $self ) or not exists $self->{'cloned'}; # HACK
+    return unless $self->{'cloned'} == $cloned;
     $self->shutdown if $self->{'autoshutdown'};
 } #DESTROY
 
@@ -1573,6 +1589,10 @@ Passing unshared values between threads is accomplished by serializing the
 specified values using C<Storable>.  This allows for great flexibility at
 the expense of more CPU usage.  It also limits what can be passed, as e.g.
 code references can B<not> be serialized and therefore not be passed.
+
+=head1 BUGS
+
+For some still unexplained reason, calling 
 
 =head1 EXAMPLES
 
