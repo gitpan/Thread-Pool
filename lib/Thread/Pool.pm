@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.31';
+$VERSION = '0.32';
 use strict;
 
 # Make sure we only load stuff when we actually need it
@@ -2042,6 +2042,11 @@ The first input parameter specifies the job ID of the job for which to set
 the result.  The rest of the input parameters is considered to be the result
 to be saved.  Whatever is specified in the rest of the input parameters, will
 be returned with the L<result> or L<result_dontwait> methods.
+
+=head1 REQUIRED MODULES
+
+ Thread::Conveyor (0.15)
+ Thread::Conveyor::Monitored (0.11)
 
 =head1 OPTIMIZATIONS
 
