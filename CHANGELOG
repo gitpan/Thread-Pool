@@ -1,3 +1,20 @@
+0.24	14 August 2002
+	Raised dependency on Thread::Conveyor again to take advantage of
+	possible problem fix.
+
+	13 August 2002
+	Reduced number of tests in test-suite for the hammering bits: it
+	was taking about 30 minutes on my development machine, which is
+	really too much.
+
+	Now uses Thread::Serialize::(freeze|thaw) for serialization of
+	data structures between threads.  Raised dependency on
+	Thread::Conveyor to make sure this always works.
+
+	Added support for Thread::Tie: the workers array will use the
+	Thread::Tie implementation if it is available.  This to avoid the
+	memory leak with shared arrays.
+
 0.23	7 August 2002
 	Added documentation for the "optimize" field (in "new") and method.
 	Thread::Pool now has its own default setting for optimization.

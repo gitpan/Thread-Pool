@@ -5,4 +5,6 @@ Investigate whether Data::Dumper could serve as an alternative for Storable.
 
 Add still more examples.
 
-Add support for Thread::Needs.
+Add support for Thread::Needs?
+
+Find out why Thread::Pool sometimes just dies in long running processes.

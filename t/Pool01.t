@@ -85,9 +85,9 @@ $removed = $pool->removed;
 ok( $removed >= 0 and $removed <= 6,	'check number of removed, #2' );
 
 $pool->shutdown;
-foreach (threads->list) {
-  warn "Thread #".$_->tid." still alive\n";
-}
+#foreach (threads->list) {
+#  warn "Thread #".$_->tid." still alive\n";
+#}
 cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
 
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #6' );

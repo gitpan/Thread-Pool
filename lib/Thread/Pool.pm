@@ -3,14 +3,12 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.23';
+our $VERSION : unique = '0.24';
 use strict;
 
 # Make sure we can do monitored belts
-# Make sure we can wait and broadcast here
 
 use Thread::Conveyor::Monitored ();
-use threads::shared qw(cond_wait cond_broadcast);
 
 # Number of times this namespace has been CLONEd
 # Allow for self referencing within job thread
@@ -107,30 +105,43 @@ sub new {
     $self->{'dispatcher'} ||= $self->{'stream'} ? \&_stream : \&_random;
     $self->_makecoderef( caller().'::',qw(pre do post stream dispatcher) );
 
-# Initialize the workers threads list as shared
-# Initialize the removed hash as shared
+# If the Thread::Tie module is loaded
+#  Initialize the workers threads list as tied and save the locking semaphore
+#  Make sure references exist in the object
+
+    if (defined( $Thread::Tie::VERSION )) {
+        $self->{'lock_workers'} = (tie my @workers, 'Thread::Tie')->semaphore;
+        @$self{qw(workers)} = (\@workers);
+
+# Else (use standard shared implemenation)
+#  Initialize the workers threads list as shared
+#  Make sure references exist in the object
+
+    } else {
+        my @workers : shared;
+        @$self{qw(workers)} = (\@workers);
+    }
+
 # Initialize the jobid counter as shared
-# Initialize the result hash as shared
 # Initialize the streamid counter as shared
 # Initialize the running flag
-
-    my @workers : shared;
-    my %removed : shared;
-    my $jobid : shared = 1;
-    my %result : shared;
-    my $streamid : shared = 1;
-    my $running : shared = 1;
-
+# Initialize the removed hash as shared
+# Initialize the result hash as shared
 # Make sure references exist in the object
 
-    @$self{qw(workers removed jobid result streamid running)} =
-     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running);
+    my $jobid : shared = 1;
+    my $streamid : shared = 1;
+    my $running : shared = 1;
+    my %removed : shared;
+    my %result : shared;
+    @$self{qw(jobid streamid running removed result)} =
+     (\$jobid,\$streamid,\$running,\%removed,\%result);
 
 # Save a frozen value to the parameters for later hiring
 # Add the number of workers indicated
 # Return the instantiated object
 
-    $self->{'startup'} = Storable::freeze( \@_ );
+    $self->{'startup'} = Thread::Serialize::freeze( @_ );
     $self->add( $add );
     return $self;
 } #new
@@ -249,7 +260,7 @@ sub result {
 
 # Obtain the object
 # Obtain the jobid
-# Obtain local copy of result hash
+# Obtain local copy of result hash reference
 # Make sure we have a value outside the block
 
     my $self = shift;
@@ -263,14 +274,14 @@ sub result {
 # Remove it from the result hash
 
     {lock( $result );
-     cond_wait( $result ) until exists $result->{$jobid};
+     threads::shared::cond_wait( $result ) until exists $result->{$jobid};
      $value = $result->{$jobid};
      delete( $result->{$jobid} );
     } #$result
 
 # Return the result of thawing
 
-    @{Storable::thaw( $value )};
+    Thread::Serialize::thaw( $value );
 } #result
 
 #---------------------------------------------------------------------------
@@ -282,7 +293,7 @@ sub result_dontwait {
 
 # Obtain the object
 # Obtain the jobid
-# Obtain local copy of the result hash ref
+# Obtain local copy of stuff we need
 # Make sure we have a value outside the block
 
     my $self = shift;
@@ -303,7 +314,7 @@ sub result_dontwait {
 
 # Return the result of thawing
 
-    @{Storable::thaw( $value )};
+    Thread::Serialize::thaw( $value );
 } #result_dontwait
 
 #---------------------------------------------------------------------------
@@ -312,7 +323,7 @@ sub result_dontwait {
 
 sub results {
 
-# Obtain local copy to result hash reference
+# Obtain local copy of stuff we need
 # Lock access to the result hash
 # Return the keys from the hash
 
@@ -329,11 +340,13 @@ sub results {
 sub workers {
 
 # Obtain the object
-# Obtain the number of workers
-# Obtain local copy of workers list
+# Obtain local copies of stuff we need
+# Make sure we have something valid to lock with
 
     my $self = shift;
-    my ($workers,$removed) = @$self{qw(workers removed)};
+    my ($workers,$lock_workers,$removed) =
+     @$self{qw(workers lock_workers removed)};
+    $lock_workers ||= $workers;
 
 # If a new number of workers specified
 #  Die now if we're trying to set number or workers in wrong thread
@@ -348,7 +361,7 @@ sub workers {
 #  Elseif too many workers
 #   Remove workers
 
-        lock( $workers );
+        lock( $lock_workers );
         my $new = shift;
         my $current = $self->workers;
         if ($current < $new) {
@@ -383,12 +396,15 @@ sub add {
 
 # Obtain the number of workers to add
 # Die now if not a proper number of workers to add
-# Obtain local copy of worker tids and dispatcher
+# Obtain local copy of stuff we need
+# Make sure we have something to lock with
 # Initialize the list with tid's
 
     my $add = shift || 1;
     die "Must add at least one thread" unless $add > 0;
-    my ($workers,$dispatcher) = @$self{qw(workers dispatcher)};
+    my ($workers,$lock_workers,$dispatcher) =
+     @$self{qw(workers lock_workers dispatcher)};
+    $lock_workers ||= $workers;
     my @tid;
 
 # Thaw the original input parameters to be sent when a thread is created
@@ -399,15 +415,15 @@ sub add {
 #  Save the tid in the local list
 #  Save the tid in the global list
 
-    @_ = @{Storable::thaw( $self->{'startup'} )};
-    {lock( $workers );
+    @_ = Thread::Serialize::thaw( $self->{'startup'} );
+    {lock( $lock_workers );
      foreach (1..$add) {
          my $thread = threads->new( $dispatcher,$self,@_ );
          my $tid = $thread->tid;
          push( @tid,$tid );
          push( @{$workers},$tid );
      }
-    } #$workers
+    } #$lock_workers
 
 # Return the thread id(s) of the worker threads created
 
@@ -477,17 +493,20 @@ sub join {
 
 # Obtain the object
 # Die now if not in the right thread
-# Obtain local copies of removed hash and workers list
+# Obtain local copies of stuff we need
+# Make sure we have something to lock with
 
     my $self = shift;
     $self->_check_originating_thread( 'join' );
-    my ($removed,$workers) = @$self{qw(removed workers)};
+    my ($removed,$workers,$lock_workers) =
+     @$self{qw(removed workers lock_workers)};
+    $lock_workers ||= $workers;
 
 # Make sure we're the only ones doing the workers list
 # Obtain local copy of the worker's tids
 # Set default list to join if no threads specified yet
 
-    lock( $workers );
+    lock( $lock_workers );
     my @worker = @{$workers};
     @_ = map {exists( $removed->{$_} ) ? ($_) : ()} @worker unless @_;
 
@@ -623,15 +642,17 @@ sub shutdown {
     }
 
 # If we were streaming
-#  Obtain the current stream ID, job ID and result hash
+#  Obtain local copy of stuff we need
+
+    if (my $stream = $self->{'stream'}) {
+        my ($streamid,$jobid,$result) = @$self{qw(streamid jobid result)};
+
 #  Set the extra parameters to be passed to streamer if monitoring
 #  Make sure we're the only one handling results
 #  Obtain last ID to loop through
 
-    if (my $stream = $self->{'stream'}) {
-        my ($streamid,$jobid,$result) = @$self{qw(streamid jobid result)};
         my @extra = exists $self->{'monitor_belt'} ? ($self) : ();
-	lock( $result );
+        lock( $result );
         my $last = $self->_first_todo_jobid;
 
 #  For all the results that still need to be streamd
@@ -643,7 +664,7 @@ sub shutdown {
         for (my $i = $$streamid; $i < $last; $i++) {
             die "Cannot find result for streaming job $i"
              unless exists( $result->{$i} );
-            $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
+            $stream->( @extra,Thread::Serialize::thaw( $result->{$i} ) );
             delete( $result->{$i} );
         }
         $$streamid = $last;
@@ -699,12 +720,10 @@ sub abort {
 
 sub notused {
 
-# Obtain the object
-# Obtain local copy of removed workers hash
+# Obtain local copy of stuff we need
 # Initialize counter
 
-    my $self = shift;
-    my $removed = $self->{'removed'};
+    my $removed = shift->{'removed'};
     my $notused = 0;
 
 # Make sure we're the only ones doing this
@@ -762,15 +781,15 @@ sub set_result {
     my $set_jobid = shift;
     return if $dont_set_result and $set_jobid == $jobid;
 
-# Obtain local copy of the result hash
+# Obtain local copy of stuff we need
 # Make sure we have only access to the result hash
 # Store the already frozen result
 # Make sure other threads get woken up
 
     my $result = $self->{'result'};
     lock( $result );
-    $result->{$set_jobid} = Storable::freeze( \@_ );
-    cond_broadcast( $result );
+    $result->{$set_jobid} = Thread::Serialize::freeze( @_ );
+    threads::shared::cond_broadcast( $result );
 } #set_result
 
 #---------------------------------------------------------------------------
@@ -796,7 +815,7 @@ sub _random {
     my ($belt,$do,$post,$result,$removed,$workers,
         $running,$pre_post_monitor_only) =
      @$self{qw(belt do post result removed workers
-               running pre_post_monitor_only)};
+        running pre_post_monitor_only)};
 
 # Perform the pre actions if there are any and we're supposed to do it
 # Reset the post routine if we're not supposed to run it
@@ -848,7 +867,6 @@ sub _random {
 #   Execute the post-action (if there is one) and save the frozen result
 #  Else (nobody's interested)
 #   Execute the post-action if there is one
-# Mark this worker thread as removed
 
     if ($running_now) {
         $dont_set_result = undef;
@@ -858,6 +876,9 @@ sub _random {
             $post->( @_ ) if $post;
         }
     }
+
+# Mark this worker thread as removed
+
     { lock( $removed ); $self->{'removed'}->{$tid} = $jobs; }
 } #_random
 
@@ -876,11 +897,12 @@ sub _stream {
     my $jobs = 0;
 
 # Obtain local copies from the hash for faster access
+# Make sure we have something to lock results with
 
-    my ($belt,$do,$post,$result,$stream,$streamid,$removed,
-        $workers,$running,$pre_post_monitor_only) =
-     @$self{qw(belt do post result stream streamid removed
-               workers running pre_post_monitor_only)};
+    my ($belt,$do,$post,$result,$stream,$streamid,
+        $removed,$workers,$running,$pre_post_monitor_only) =
+     @$self{qw(belt do post result stream streamid
+        removed workers running pre_post_monitor_only)};
 
 # Perform the pre actions if there are any and we're allowed to
 # Reset the post routine if we're not supposed to run it
@@ -937,7 +959,7 @@ sub _stream {
          my $i = $$streamid;
          for (; $i < $jobid; $i++) {
              last unless exists( $result->{$i} );
-             $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
+             $stream->( @extra,Thread::Serialize::thaw( $result->{$i} ) );
              delete( $result->{$i} );
          } #$result,$streamid
 
@@ -975,7 +997,6 @@ sub _stream {
 #   Execute the post-action (if there is one) and save the frozen result
 #  Else (nobody's interested)
 #   Execute the post-action if there is one
-# Mark this worker thread as removed
 
     if ($running_now) {
         $dont_set_result = undef;
@@ -985,6 +1006,9 @@ sub _stream {
             $post->( @_ ) if $post;
         }
     }
+
+# Mark this worker thread as removed
+
     { lock( $removed ); $self->{'removed'}->{$tid} = $jobs; }
 } #_stream
 
@@ -1122,6 +1146,8 @@ Thread::Pool - group of threads for performing similar jobs
 
 =head1 SYNOPSIS
 
+ use Thread::Tie; # only if you want to use memory saving Thread::Tie features
+
  use Thread::Pool;
  $pool = Thread::Pool->new(
   {
@@ -1212,6 +1238,13 @@ Unless told otherwise, all jobs that are assigned, will be executed before
 the pool is allowed to be destroyed.  If a "stream" or "monitor" routine
 is specified, then all results will be handled by that routine before the
 pool is allowed to be destroyed.
+
+Since as of this writing (threads::shared.pm, version 0.90) there are still
+memory leaks with using shared arrays and hashes, the Thread::Pool module
+will use the L<Thread::Tie> implementation for shared arrays and hashes if
+that module was loaded before the Thread::Pool object was created.  Please
+note that the Thread::Tie module is B<not> included in this package: you
+will need to get that seperately from CPAN.
 
 =head1 CLASS METHODS
 
