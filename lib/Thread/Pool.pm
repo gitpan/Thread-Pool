@@ -3,34 +3,71 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.25';
+our $VERSION = '0.26';
 use strict;
+
+# Make sure we only load stuff when we actually need it
+
+use AutoLoader 'AUTOLOAD';
 
 # Make sure we can do monitored belts
 
 use Thread::Conveyor::Monitored ();
 
-# Number of times this namespace has been CLONEd
 # Allow for self referencing within job thread
 # Flag to indicate whether the current thread should be removed
 # The current jobid, when available
 # Flag to indicate result should _not_ be saved (assume another thread will)
 
-my $cloned = 0;
 my $SELF;
 my $remove_me;
 my $jobid;
 my $dont_set_result;
 
+# Number of times this namespace has been CLONEd
 # Set default optimization
 # Set default checkpoint frequency
 
-my $OPTIMIZE = 'memory';
-my $FREQUENCY = Thread::Conveyor::Monitored->frequency;
+our $cloned = 0;
+our $OPTIMIZE = 'memory';
+our $FREQUENCY = Thread::Conveyor::Monitored->frequency;
 
 # Satisfy -require-
 
 1;
+
+#---------------------------------------------------------------------------
+
+# Standard Perl functionality
+
+#---------------------------------------------------------------------------
+#  IN: 1 namespace being cloned (ignored)
+
+sub CLONE { $cloned++ } #CLONE
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+
+sub DESTROY {
+
+# Return now if we're in a rogue DESTROY
+
+    return unless UNIVERSAL::isa( $_[0],__PACKAGE__ ); #HACK
+
+# Obtain the object
+# Return now if we're not allowed to run DESTROY
+# Do the shutdown if shutdown is required
+
+    my $self = shift;
+    return unless $self->{'cloned'} == $cloned;
+    $self->shutdown if $self->{'autoshutdown'};
+} #DESTROY
+
+#---------------------------------------------------------------------------
+
+# AutoLoader takes over from here
+
+__END__
 
 #---------------------------------------------------------------------------
 
@@ -1141,35 +1178,6 @@ sub _have_monitored {
 
 #---------------------------------------------------------------------------
 
-# Standard Perl functionality methods
-
-#---------------------------------------------------------------------------
-#  IN: 1 namespace being cloned (ignored)
-
-sub CLONE { $cloned++ } #CLONE
-
-#---------------------------------------------------------------------------
-#  IN: 1 instantiated object
-
-sub DESTROY {
-
-# Return now if we're in a rogue DESTROY
-
-    return unless UNIVERSAL::isa( $_[0],__PACKAGE__ ); #HACK
-
-# Obtain the object
-# Return now if we're not allowed to run DESTROY
-# Do the shutdown if shutdown is required
-
-    my $self = shift;
-    return unless $self->{'cloned'} == $cloned;
-    $self->shutdown if $self->{'autoshutdown'};
-} #DESTROY
-
-#---------------------------------------------------------------------------
-
-__END__
-
 =head1 NAME
 
 Thread::Pool - group of threads for performing similar jobs
@@ -1986,12 +1994,20 @@ the result.  The rest of the input parameters is considered to be the result
 to be saved.  Whatever is specified in the rest of the input parameters, will
 be returned with the L<result> or L<result_dontwait> methods.
 
+=head1 OPTIMIZATIONS
+
+This module uses L<AutoLoader> to reduce memory and CPU usage. This causes
+subroutines only to be compiled in a thread when they are actually needed at
+the expense of more CPU when they need to be compiled.  Simple benchmarks
+however revealed that the overhead of the compiling single routines is not
+much more (and sometimes a lot less) than the overhead of cloning a Perl
+interpreter with a lot of subroutines pre-loaded.
+
 =head1 CAVEATS
 
 Passing unshared values between threads is accomplished by serializing the
-specified values using C<Storable>.  This allows for great flexibility at
-the expense of more CPU usage.  It also limits what can be passed, as e.g.
-code references can B<not> be serialized and therefore not be passed.
+specified values using L<Thread::Serialize>.  Please see the CAVEATS section
+there for an up-to-date status of what can be passed around between threads.
 
 =head1 EXAMPLES
 
@@ -2148,6 +2164,7 @@ modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<threads>, L<Thread::Conveyor>, L<Thread::Conveyor::Monitored>, L<Storable>.
+L<threads>, L<Thread::Conveyor>, L<Thread::Conveyor::Monitored>,
+L<Thread::Serialize>.
 
 =cut

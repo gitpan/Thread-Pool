@@ -5,7 +5,7 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-BEGIN {our $tests = 1 + (2*2*5*21)}
+BEGIN {our $tests = 1 + (2*2*4*21)}
 use Test::More tests => $tests;
 use strict;
 
@@ -17,12 +17,12 @@ my $check;
 my $format = '%5d';
 my @list : shared;
 
+# [int(2+rand(8)),int(1+rand(1000))],
 my @amount = (
  [10,0],
  [5,5],
  [10,100],
  [1,1000],
- [int(2+rand(8)),int(1+rand(1000))],
 );
 
 foreach my $optimize (qw(cpu memory)) {

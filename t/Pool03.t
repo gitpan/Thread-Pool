@@ -7,7 +7,7 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle; # needed, cause autoflush method doesn't load it
-use Test::More tests => 3 + (2*2*5*25);
+use Test::More tests => 3 + (2*2*4*25);
 
 diag( "Test monitoring to file with checkpointing" );
 
@@ -22,12 +22,12 @@ my $file = 'anymonitor';
 my $handle;
 my $checkpointed : shared;
 
+# [int(2+rand(8)),int(1+rand(1000))],
 my @amount = (
  [10,0],
  [5,5],
  [10,100],
  [1,1000],
- [int(2+rand(8)),int(1+rand(1000))],
 );
 
 

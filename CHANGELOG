@@ -1,3 +1,11 @@
+0.26	30 August 2002
+        Changed all modules to use AutoLoader to defer loading of necessary
+	subroutines to when they are actually needed.  This should save
+	memory and CPU for larger programs, or with large numbers of threads.
+	The test-suite only marginally takes more memory and uses 10% less CPU:
+	overhead of compiling is levelled out with the overhead of cloning
+	pre-compiled routines.
+
 0.25	27 August 2002
 	Added support for checkpointing on the monitor thread + documentation
 	+ adaptation of the test-suite.

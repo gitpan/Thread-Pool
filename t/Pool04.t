@@ -7,7 +7,7 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle;
-use Test::More tests => 1 + (2*2*5*12) + 9;
+use Test::More tests => 1 + (2*2*4*12) + 9;
 
 diag( "Test job throttling" );
 
@@ -20,12 +20,12 @@ my @list;
 my $file = 'anymonitor';
 my $handle;
 
+# [int(5+rand(6)),int(301+rand(700))],
 my @amount = (
  [10,0],
  [5,5],
  [1,25],
  [10,100],
- [int(5+rand(6)),int(301+rand(700))],
 );
 
 
