@@ -123,12 +123,11 @@ cmp_ok( $jobid5,'==',6,			'check fifth jobid' );
 my ($result) = $pool->result( $jobid5 );
 is( $result,'remove_me',		'check result remove_me' );
 
+$pool->shutdown;
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #4' );
 cmp_ok( $pool->done,'==',6,		'check # jobs done, #4' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
 cmp_ok( scalar($pool->removed),'==',11,	'check number of removed, #4' );
-
-$pool->shutdown;
 cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
 
 $notused = $pool->notused;

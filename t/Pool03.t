@@ -5,6 +5,9 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
+use Carp;
+$SIG{__DIE__} = \&Carp::croak;
+
 use strict;
 use IO::Handle; # needed, cause autoflush method doesn't load it
 use Test::More tests => 1 + (2*5*21);

@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.21';
+our $VERSION : unique = '0.22';
 use strict;
 
 # Make sure we can do monitored belts
@@ -46,6 +46,14 @@ sub new {
     $self->{'cloned'} = $cloned;
     die "Must have a subroutine to perform jobs" unless exists $self->{'do'};
 
+# Save the number of workers that were specified now (is changed later)
+# Set the maximum number of jobs if not set already
+# Set the minimum number of jobs if not set already
+ 
+    my $add = $self->{'workers'};
+    $self->{'maxjobs'} = 5 * ($add || 1) unless exists( $self->{'maxjobs'} );
+    $self->{'minjobs'} ||= $self->{'maxjobs'} >> 1;
+
 # If we're supposed to monitor
 #  Die now if also attempting to stream
 
@@ -59,12 +67,14 @@ sub new {
 
         $self->_makecoderef( caller().'::',qw(pre monitor post) );
         @$self{qw(monitor_belt monitor_thread)} =
-	 Thread::Conveyor::Monitored->new(
+	Thread::Conveyor::Monitored->new(
           {
            pre => $self->{'pre'},
            monitor => $self->{'monitor'},
            post => $self->{'post'},
            exit => $self->{'exit'},
+           maxboxes => $self->{'maxjobs'},
+           minboxes => $self->{'minjobs'},
           },
           @_
         );
@@ -74,20 +84,12 @@ sub new {
 # Create a belt for it
 # Set the auto-shutdown flag unless it is specified already
 # Set the dispatcher to be used if none specified yet
+# Make sure all subroutines are code references
 
     $self->{'belt'} = Thread::Conveyor->new;
     $self->{'autoshutdown'} = 1 unless exists $self->{'autoshutdown'};
     $self->{'dispatcher'} ||= $self->{'stream'} ? \&_stream : \&_random;
-
-# Make sure all subroutines are code references
-# Save the number of workers that were specified now (is changed later)
-# Set the maximum number of jobs if not set already
-# Set the minimum number of jobs if not set already
-
     $self->_makecoderef( caller().'::',qw(pre do post stream dispatcher) );
-    my $add = $self->{'workers'};
-    $self->{'maxjobs'} = 5 * ($add || 1) unless exists( $self->{'maxjobs'} );
-    $self->{'minjobs'} ||= $self->{'maxjobs'} >> 1;
 
 # Initialize the workers threads list as shared
 # Initialize the removed hash as shared
@@ -95,7 +97,6 @@ sub new {
 # Initialize the result hash as shared
 # Initialize the streamid counter as shared
 # Initialize the running flag
-# Initialize the halted flag
 
     my @workers : shared;
     my %removed : shared;
@@ -103,12 +104,11 @@ sub new {
     my %result : shared;
     my $streamid : shared = 1;
     my $running : shared = 1;
-    my $halted : shared = 0;
 
 # Make sure references exist in the object
 
-    @$self{qw(workers removed jobid result streamid running halted)} =
-     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running,\$halted);
+    @$self{qw(workers removed jobid result streamid running)} =
+     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running);
 
 # Save a frozen value to the parameters for later hiring
 # Add the number of workers indicated
@@ -131,37 +131,6 @@ sub job {
 
     my $self = shift;
     my $belt = $self->{'belt'};
-
-# If there is number of jobs limitation active
-#  Obtain local copy of a reference to the halted flag
-#  If we're currently halted
-#   Lock the job belt
-#   Wait until the halt flag is reset
-#   Notify the rest of the world again
-
-    if (my $maxjobs = $self->{'maxjobs'}) {
-	my $halted = $self->{'halted'};
-        lock( $belt );
-        if ($$halted) {
-            cond_wait( $belt ) while $$halted;
-            cond_broadcast( $belt );
-
-#  Elseif there are now too many jobs in the belt
-#   Die now if there are no workers available to ever lower the number of jobs
-#   Set the job submission halted flag
-#   Wake up any threads that are waiting for jobs to be handled
-#   Wait until the halt flag is reset
-#   Notify the rest of the world again
-
-        } elsif (@$belt > $maxjobs) {
-            die "Too many jobs submitted while no workers available"
-             unless $self->workers;
-            $$halted = 1;
-            cond_broadcast( $belt );
-            cond_wait( $belt ) while $$halted;
-            cond_broadcast( $belt );
-        }
-    }
 
 # If we're streaming
 #  Die now if an individual jobid requested
@@ -389,13 +358,15 @@ sub add {
     @_ = @{Storable::thaw( $self->{'startup'} )};
     if ($self->{'monitor_belt'} and not exists( $self->{'monitor_thread'} ) ) {
         @$self{qw(monitor_belt monitor_thread)} =
-	 Thread::Conveyor::Monitored->new(
+	Thread::Conveyor::Monitored->new(
           {
            pre => $self->{'pre'},
            monitor => $self->{'monitor'},
            belt => $self->{'monitor_belt'},
            post => $self->{'post'},
            exit => $self->{'exit'},
+           maxboxes => $self->{'maxjobs'},
+           minboxes => $self->{'minjobs'},
           },
           @_,
         );
@@ -525,11 +496,36 @@ sub join {
 sub maxjobs {
 
 # Obtain the object
-# Set the new maxjobs and minjobs value if new value specified
-# Return current value
+# If a new value is specified
+#  Obtain the new maxjobs value
+#  Determine new default minjobs value
 
     my $self = shift;
-    $self->{'minjobs'} = ($self->{'maxjobs'} = shift) >> 1 if @_;
+    if (@_) {
+        my $maxjobs = $self->{'maxjobs'} = shift;
+        my $minjobs = $self->{'minjobs'} = $maxjobs >> 1;
+
+#  If there is a belt (should always be there)
+#   Set new maximum number of boxes
+#   Set new minimum number of boxes
+
+        if (my $belt = $self->{'belt'}) {
+            $belt->maxboxes( $maxjobs );
+            $belt->minboxes( $minjobs );
+        }
+
+#  If there is a monitoring belt
+#   Set new maximum number of boxes
+#   Set new minimum number of boxes
+
+        if (my $monitor = $self->{'monitor_belt'}) {
+            $monitor->maxboxes( $maxjobs );
+            $monitor->minboxes( $minjobs );
+        }
+    }
+
+# Return current value
+
     $self->{'maxjobs'};
 } #maxjobs
 
@@ -541,11 +537,18 @@ sub maxjobs {
 sub minjobs {
 
 # Obtain the object
-# Set the new minjobs value if new value specified
+# If a new value is specified
+#  Obtain the new minjobs value
+#  Set minimum number of boxes on the belt
+#  Set minimum number of boxes on the monitoring belt if any
 # Return current value
 
     my $self = shift;
-    $self->{'minjobs'} = shift if @_;
+    if (@_) {
+        my $minjobs = $self->{'minjobs'} = shift;
+        $self->{'belt'}->minboxes( $minjobs );
+        $self->{'monitor_belt'}->minboxes($minjobs) if $self->{'monitor_belt'};
+    }
     $self->{'minjobs'};
 } #minjobs
 
@@ -764,9 +767,9 @@ sub _random {
 # Obtain local copies from the hash for faster access
 
     my ($belt,$do,$post,$result,$removed,$workers,
-        $running,$halted,$maxjobs,$minjobs,$pre_post_monitor_only) =
+        $running,$pre_post_monitor_only) =
      @$self{qw(belt do post result removed workers
-               running halted maxjobs minjobs pre_post_monitor_only)};
+               running pre_post_monitor_only)};
 
 # Perform the pre actions if there are any and we're supposed to do it
 # Reset the post routine if we're not supposed to run it
@@ -785,23 +788,6 @@ sub _random {
         @list = $belt->take;
 	last unless $list[0];
         $dont_set_result = undef;
-
-#  If there is amount of job limitation active
-#   Lock access to the job belt
-#   If job submission is halted
-#    If current number of jobs is less than minimum number of jobs
-#     Reset the halted flag, allow job submissions again
-#     Wake up all of the other threads to allow them to submit again
-
-        if ($maxjobs) {
-            lock( $belt );
-            if ($$halted) {
-                if (@$belt <= $minjobs) {
-                    $$halted = 0;
-                    cond_broadcast( $belt );
-                }
-            }
-        }
 
 #  If no one is interested in the result
 #   Reset the jobid
@@ -865,9 +851,9 @@ sub _stream {
 # Obtain local copies from the hash for faster access
 
     my ($belt,$do,$post,$result,$stream,$streamid,$removed,
-        $workers,$running,$halted,$maxjobs,$minjobs,$pre_post_monitor_only) =
+        $workers,$running,$pre_post_monitor_only) =
      @$self{qw(belt do post result stream streamid removed
-               workers running halted maxjobs minjobs pre_post_monitor_only)};
+               workers running pre_post_monitor_only)};
 
 # Perform the pre actions if there are any and we're allowed to
 # Reset the post routine if we're not supposed to run it
@@ -888,23 +874,6 @@ sub _stream {
         @list = $belt->take;
         last unless $jobid = $list[0];
         $dont_set_result = undef;
-
-#  If there is amount of job limitation active
-#   Lock access to the job belt
-#   If job submission is halted
-#    If current number of jobs is less than minimum number of jobs
-#     Reset the halted flag, allow job submissions again
-#     Wake up all of the other threads to allow them to submit again
-
-        if ($maxjobs) {
-            lock( $belt );
-            if ($$halted) {
-                if (@$belt <= $minjobs) {
-                    $$halted = 0;
-                    cond_broadcast( $belt );
-                }
-            }
-        }
 
 #  If we're in sync (this job is the next one to be streamed)
 #   Obtain the result of the job
@@ -1059,11 +1028,11 @@ sub _jobid {
 sub _first_todo_jobid {
 
 # Obtain the object
-# Obtain the reference to the job belt
+# Obtain the reference to the actual job belt
 # Make sure we're the only one handling the job belt
 
     my $self = shift;
-    my $belt = $self->{'belt'};
+    my $belt = $self->{'belt'}->_belt;
     lock( $belt );
 
 # For all the jobs in the belt
@@ -1072,7 +1041,7 @@ sub _first_todo_jobid {
 # Return the next job id that is going to be issued
 
     foreach (@$belt) {
-        my @param = @{Storable::thaw( $_ )};
+        my @param = @{$belt->_thaw( $_ )};
 	return $param[0] if @param == 2;
     }
     return ${$self->{'jobid'}};

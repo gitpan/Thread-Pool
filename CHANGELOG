@@ -1,3 +1,16 @@
+0.22    1 August 2002
+	Fixed problem in random access test-suite that would fail only on
+	faster machines.
+
+	Increased Makefile.PL dependencies for Thread::Conveyor and
+	Thread::Conveyor::Monitored.
+
+	Added support for throttling Conveyor belts.  Removed local
+	throttling support, as it now uses the throttling support of
+	Thread::Conveyor.  This means that now monitoring belts will
+	be throttled the same way as the job belt (they were not throttled
+	before).
+
 0.21	29 July 2002
 	Hopefully fixed the last deadlock issues with regards to job
 	throttling.  Thread::Pool::Resolve finally gets through its test-suite
