@@ -1,3 +1,10 @@
+0.29	11 August 2003
+	Cleaned Makefile.PL and upgraded dependencies and copyright.
+
+	Fixed test-suite so it runs cleanly under warnings.  Added special
+	__WARN__ handler to tell where any warning came from.  Fixed a problem
+	in Thread::Pool->new with an undefined "maxjobs" setting.
+
 0.28	30 September 2002
 	Use "load.pm" instead of AutoLoader.  Increased dependency on
         Thread::Conveyor and T::C::Monitored, which also use "load.pm" now.

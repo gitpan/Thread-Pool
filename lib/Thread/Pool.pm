@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.28';
+$VERSION = '0.29';
 use strict;
 
 # Make sure we only load stuff when we actually need it
@@ -97,7 +97,7 @@ sub new {
 # Set the default optimization if none specified
  
     my $add = $self->{'workers'};
-    $self->{'maxjobs'} = 5 * ($add || 1) unless exists( $self->{'maxjobs'} );
+    $self->{'maxjobs'} = 5 * ($add || 1) unless defined( $self->{'maxjobs'} );
     $self->{'minjobs'} ||= $self->{'maxjobs'} >> 1;
     $self->{'optimize'} ||= $OPTIMIZE;
 
@@ -185,7 +185,7 @@ sub new {
 
     $self->{'startup'} = Thread::Serialize::freeze( @_ );
     $self->add( $add );
-    return $self;
+    $self;
 } #new
 
 #---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ sub done {
 
     my $done = 0;
     $done += ($removed->{$_} || 0) foreach @_;
-    return $done;
+    $done;
 } #done
 
 #---------------------------------------------------------------------------
@@ -799,10 +799,10 @@ sub notused {
 # Return the resulting amount
 
     lock( $removed );
-    foreach (keys %{$removed}) {
-        $notused++ unless $removed->{$_};
+    while (my $key = each %{$removed}) {
+        $notused++ unless $removed->{$key};
     }
-    return $notused;
+    $notused;
 } #notused
 
 #---------------------------------------------------------------------------
@@ -1162,7 +1162,7 @@ sub _first_todo_jobid {
         my @param = $belt->peek_dontwait( $i );
         return $param[0] if @param == 2;
     }
-    return ${$self->{'jobid'}};
+    ${$self->{'jobid'}};
 } #_first_todo_jobid
 
 #---------------------------------------------------------------------------
@@ -1987,7 +1987,7 @@ be returned with the L<result> or L<result_dontwait> methods.
 
 =head1 OPTIMIZATIONS
 
-This module uses L<AutoLoader> to reduce memory and CPU usage. This causes
+This module uses L<load> to reduce memory and CPU usage. This causes
 subroutines only to be compiled in a thread when they are actually needed at
 the expense of more CPU when they need to be compiled.  Simple benchmarks
 however revealed that the overhead of the compiling single routines is not
@@ -2131,12 +2131,15 @@ we're only showing that.
    my $todo = $resolved{$ip};
 
  # Make sure we're the only one accessing the resolved hash (rest of this sub)
- # Set the results for all the lines with this IP number
+ # For all the lines with this IP number
+ #  Set the results
  # Remove the todo hash and replace by domain or blank string if unresolvable
  # Return the result for this job
 
    lock( %resolved );
-   $pool->set_result( $_,$domain.$todo->{$_} ) foreach keys %{$todo};
+   while (my $key = each %{$todo}) {
+       $pool->set_result( $key,$domain.$todo->{$key} )
+   }
    $resolved{$ip} = $domain eq $ip ? undef : $domain;
    $domain.$line;
  } #do
@@ -2149,7 +2152,7 @@ Please report bugs to <perlbugs@dijkmat.nl>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2002 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
+Copyright (c) 2002-2003 Elizabeth Mattijsen <liz@dijkmat.nl>. All rights
 reserved.  This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 

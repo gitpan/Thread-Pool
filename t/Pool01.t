@@ -6,7 +6,11 @@ BEGIN {				# Magic Perl CORE pragma
 }
 
 use strict;
+use warnings;
 use Test::More tests => 39;
+
+$SIG{__DIE__} = sub { require Carp; Carp::confess() };
+$SIG{__WARN__} = sub { require Carp; Carp::confess() };
 
 diag( "Test general functionality" );
 
@@ -47,7 +51,7 @@ cmp_ok( scalar($pool->workers),'==',1,	'check number of workers' );
 $pool->job( qw(d e f) );	# do a job, for statistics only
 
 my $todo = $pool->todo;
-ok( $todo >= 0 and $todo <= 1,		'check # jobs todo, #1' );
+ok( ($todo >= 0 and $todo <= 1),		'check # jobs todo, #1' );
 cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #1' );
 
 my $jobid1 = $pool->job( qw(g h i) );
@@ -64,15 +68,15 @@ cmp_ok( scalar($pool->workers),'==',10,	'check number of workers, #3' );
 
 $pool->workers( 5 );
 my $workers = $pool->workers;
-ok( $workers >= 5 and $workers <= 10,	'check number of workers, #4' );
+ok( ($workers >= 5 and $workers <= 10),	'check number of workers, #4' );
 my $removed = $pool->removed;
-ok( $removed >= 0 and $removed <= 5,	'check number of removed, #1' );
+ok( ($removed >= 0 and $removed <= 5),	'check number of removed, #1' );
 
 $todo = $pool->todo;
-ok( $todo >= 0 and $todo <= 3,		'check # jobs todo, #2' );
+ok( ($todo >= 0 and $todo <= 3),	'check # jobs todo, #2' );
 
 my @result = $pool->result_dontwait( $jobid1 );
-ok( !@result or (join('',@result) eq 'ihg'), 'check result_dontwait' );
+ok( (!@result or ("@result" eq 'i h g')), 'check result_dontwait' );
 
 @result = $pool->result( $jobid2 );
 is( join('',@result),'mlk',		'check result' );
@@ -84,9 +88,9 @@ cmp_ok( $jobid3,'==',3,			'check third jobid' );
 is( join('',@result),'abcabc',		'check result remove' );
 
 $workers = $pool->workers;
-ok( $workers >= 4 and $workers <= 10,	'check number of workers, #5' );
+ok( ($workers >= 4 and $workers <= 10),	'check number of workers, #5' );
 $removed = $pool->removed;
-ok( $removed >= 0 and $removed <= 6,	'check number of removed, #2' );
+ok( ($removed >= 0 and $removed <= 6),	'check number of removed, #2' );
 
 $pool->shutdown;
 #foreach (threads->list) {
@@ -100,7 +104,7 @@ cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #3' );
 cmp_ok( $pool->done,'==',3,		'check # jobs done, #3' );
 
 my $notused = $pool->notused;
-ok( $notused >= 0 and $notused < 10,	'check not-used threads, #1' );
+ok( ($notused >= 0 and $notused < 10),	'check not-used threads, #1' );
 
 #================================================================
 
@@ -133,7 +137,7 @@ cmp_ok( scalar($pool->removed),'==',1,	'check number of removed, #4' );
 cmp_ok( scalar(()=threads->list),'==',$t0,'check for remaining threads' );
 
 $notused = $pool->notused;
-ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );
+ok( ($notused >= 0 and $notused < 11),	'check not-used threads, #2' );
 
 sub pool { Thread::Pool->new(
  {

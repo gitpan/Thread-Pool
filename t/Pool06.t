@@ -5,8 +5,12 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use Test::More tests => 1 + (2*10);
 use strict;
+use warnings;
+use Test::More tests => 1 + (2*10);
+
+$SIG{__DIE__} = sub { require Carp; Carp::confess() };
+$SIG{__WARN__} = sub { require Carp; Carp::confess() };
 
 diag( "Test job submission from different threads" );
 

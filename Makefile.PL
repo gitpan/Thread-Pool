@@ -4,12 +4,11 @@ use ExtUtils::MakeMaker;
 
 WriteMakefile (
  NAME		=> "Thread::Pool",
- ($[ >= 5.005) ?
- (AUTHOR	=> 'Elizabeth Mattijsen (liz@dijkmat.nl)',
-  ABSTRACT	=> 'group of threads for performing similar jobs') : (),
+ AUTHOR		=> 'Elizabeth Mattijsen (liz@dijkmat.nl)',
+ ABSTRACT	=> 'group of threads for performing similar jobs',
  VERSION_FROM	=> 'lib/Thread/Pool.pm',
  PREREQ_PM	=> {
-                    'Thread::Conveyor' => '0.13',
-                    'Thread::Conveyor::Monitored' => '0.09',
+                    'Thread::Conveyor' => '0.14',
+                    'Thread::Conveyor::Monitored' => '0.10',
                    },
 );

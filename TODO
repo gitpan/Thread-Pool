@@ -12,3 +12,5 @@ Add still more examples.
 Add support for Thread::Needs?
 
 Find out why Thread::Pool sometimes just dies in long running processes.
+
+Check out whether all checks for $pool->notused are correct.

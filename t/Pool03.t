@@ -6,8 +6,12 @@ BEGIN {				# Magic Perl CORE pragma
 }
 
 use strict;
+use warnings;
 use IO::Handle; # needed, cause autoflush method doesn't load it
 use Test::More tests => 3 + (2*2*4*25);
+
+$SIG{__DIE__} = sub { require Carp; Carp::confess() };
+$SIG{__WARN__} = sub { require Carp; Carp::confess() };
 
 diag( "Test monitoring to file with checkpointing" );
 
@@ -88,7 +92,7 @@ cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #1' );
 cmp_ok( $pool->done,'==',$times,	'check # jobs done, #1' );
 
 my $notused = $pool->notused;
-ok( $notused >= 0 and $notused <= $t,	'check not-used threads, #1' );
+ok( ($notused >= 0 and $notused <= $t),	'check not-used threads, #1' );
 
 open( my $in,"<$file" ) or die "Could not read $file: $!";
 is( join('',<$in>),$check,		'check first result' );
@@ -115,7 +119,7 @@ cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #2' );
 cmp_ok( $pool->done,'==',$times,	'check # jobs done, #2' );
 
 $notused = $pool->notused;
-ok( $notused >= 0 and $notused < $t+$t,	'check not-used threads, #2' );
+ok( ($notused >= 0 and $notused <= $t+$t),	'check not-used threads, #2' );
 
 open( $in,"<$file" ) or die "Could not read $file: $!";
 is( join('',<$in>),$check,		'check second result' );

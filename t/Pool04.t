@@ -6,8 +6,12 @@ BEGIN {				# Magic Perl CORE pragma
 }
 
 use strict;
+use warnings;
 use IO::Handle;
 use Test::More tests => 1 + (2*2*4*12) + 9;
+
+$SIG{__DIE__} = sub { require Carp; Carp::confess() };
+$SIG{__WARN__} = sub { require Carp; Carp::confess() };
 
 diag( "Test job throttling" );
 
@@ -108,7 +112,7 @@ cmp_ok( $pool->todo,'==',0,		'check # jobs todo' );
 cmp_ok( $pool->done,'==',$times+$times,	'check # jobs done' );
 
 my $notused = $pool->notused;
-ok( $notused >= 0 and $notused < $t+$t,	'check not-used threads' );
+ok( ($notused >= 0 and $notused <= $t+$t),	'check not-used threads' );
 
 open( my $in,"<$file" ) or die "Could not read $file: $!";
 is( join('',<$in>),$check.$check,	'check result' );
