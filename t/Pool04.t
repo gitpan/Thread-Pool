@@ -7,18 +7,11 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle;
-our $tests;
-BEGIN {$tests = 1 + (2*5*10)}
-use Test::More tests => $tests;
+use Test::More tests => 1 + (2*5*10);
 
 diag( "Test job throttling" );
 
 BEGIN { use_ok('Thread::Pool') }
-
-SKIP: {
-
-eval {require Thread::Queue::Any::Monitored};
-skip( "Thread::Queue::Any::Monitored not installed", $tests-1 ) if $@;
 
 my $check;
 my $format = '%5d';
@@ -111,5 +104,3 @@ is( join('',<$in>),$check.$check,	'check second result' );
 close( $in );
 
 } #_runtest
-
-} #SKIP:

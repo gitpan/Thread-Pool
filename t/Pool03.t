@@ -7,18 +7,11 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle; # needed, cause autoflush method doesn't load it
-our $tests;
-BEGIN {$tests = 1 + (2*5*17)}
-use Test::More tests => $tests;
+use Test::More tests => 1 + (2*5*17);
 
 diag( "Test monitoring to file" );
 
 BEGIN { use_ok('Thread::Pool') }
-
-SKIP: {
-
-eval {require Thread::Queue::Any::Monitored};
-skip( "Thread::Queue::Any::Monitored not installed", $tests-1 ) if $@;
 
 my $check;
 my $format = '%5d';
@@ -37,12 +30,12 @@ my @amount = (
 
 
 sub pre {
-  return unless Thread::Queue::Any::Monitored->self;
+  return unless Thread::Pool->monitor;
   open( $handle,">$_[0]" ) or die "Could not open file $_[0]: $!";
 }
 
 sub post {
-  return unless Thread::Queue::Any::Monitored->self;
+  return unless Thread::Pool->monitor;
   close( $handle );
 }
 
@@ -122,5 +115,3 @@ is( join('',<$in>),$check,		'check second result' );
 close( $in );
 
 } #_runtest
-
-} #SKIP:

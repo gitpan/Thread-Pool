@@ -1,6 +1,3 @@
-Add Thread::Pool::LogResolve functionality.  Possibly add an IO-layer for
-it.
+Investigate whether Data::Dumper could serve as an alternative for Storable.
 
-Add more examples.
-
-Add automatic handling of adding/removing threads a la Apache?
+Add still more examples.

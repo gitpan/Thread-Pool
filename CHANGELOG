@@ -1,3 +1,24 @@
+0.19	25 July 2002
+	Made $VERSION have the : unique attribute to save memory.
+
+	Removed stray "use Carp" that was left behind from some debugging.
+	rearranged -use-s to minimize what is exactly really needed.  Adapted
+	Makefile.PL to now also depend on Thread::Conveyor::Monitored.
+
+	Fixed problem in "shutdown" which would sometimes put too many stop
+	requests on the job belt.  With the new belt->peek_dontwait method
+	any remaining stop requests are removed from the belt.  This should
+	fix test-suite errors that occurred only on some systems.
+
+	Now depends on both Thread::Conveyor and Thread::Conveyor::Monitored
+	instead of Thread::Queue::Any and Thread::Queue::Any::Monitored.
+	Changed metaphor from queue to belt in the documentation and the
+	test-suite.
+
+	24 July 2002
+	Added a more elaborate example for log resolving, which is the base
+	code for the new Thread::Pool::Resolve module.
+
 0.18	23 July 2002
 	Finally (hopefully) fixed problems with deadlocking.  It seems that
 	accessing unlocked shared arrays and hashes may cause deadlocking

@@ -1,22 +1,16 @@
 package Thread::Pool;
 
-use Carp ();
-
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.18';
+our $VERSION : unique = '0.19';
 use strict;
 
-# Make sure we can do threads
-# Make sure we can share here
-# Make sure we can super duper queues
-# Make sure we can freeze and thaw (just to make sure)
+# Make sure we can do monitored belts
+# Make sure we can wait and broadcast here
 
-use threads ();
+use Thread::Conveyor::Monitored ();
 use threads::shared qw(cond_wait cond_broadcast);
-use Thread::Queue::Any ();
-use Storable ();
 
 # Number of times this namespace has been CLONEd
 # Allow for self referencing within job thread
@@ -57,8 +51,8 @@ sub new {
 #  Die now if also attempting to stream
 
     if (exists $self->{'monitor'}) {
-        eval {require Thread::Queue::Any::Monitored}
-         unless defined( $Thread::Queue::Any::Monitored::VERSION );
+        eval {require Thread::Conveyor::Monitored}
+         unless defined( $Thread::Conveyor::Monitored::VERSION );
         die "Cannot stream and monitor at the same time"
          if exists $self->{ 'stream'};
 
@@ -67,7 +61,7 @@ sub new {
 #  Set the streaming routine that sends to the monitor
 
         $self->_makecoderef( caller().'::',qw(pre monitor post) );
-        @$self{qw(monitorq monitort)} = Thread::Queue::Any::Monitored->new(
+        @$self{qw(monitorb monitort)} = Thread::Conveyor::Monitored->new(
          {
           pre => $self->{'pre'},
           monitor => $self->{'monitor'},
@@ -79,11 +73,11 @@ sub new {
         $self->{'stream'} = \&_have_monitored;
     }
 
-# Create a super duper queue for it
+# Create a belt for it
 # Set the auto-shutdown flag unless it is specified already
 # Set the dispatcher to be used if none specified yet
 
-    $self->{'jobq'} = Thread::Queue::Any->new;
+    $self->{'jobbelt'} = Thread::Conveyor->new;
     $self->{'autoshutdown'} = 1 unless exists $self->{'autoshutdown'};
     $self->{'dispatcher'} ||= $self->{'stream'} ? \&_stream : \&_random;
 
@@ -135,68 +129,68 @@ sub new {
 sub job { 
 
 # Obtain the object
-# Obtain local copy of the job queue
+# Obtain local copy of the job belt
 
     my $self = shift;
-    my $jobq = $self->{'jobq'};
+    my $jobbelt = $self->{'jobbelt'};
 
 # If there is number of jobs limitation active
 #  Obtain local copy of a reference to the halted flag
 #  If we're currently halted
-#   Lock the job queue
+#   Lock the job belt
 #   Wait until the halt flag is reset
 #   Notify the rest of the world again
 
     if (my $maxjobs = $self->{'maxjobs'}) {
 	my $halted = $self->{'halted'};
         if ($$halted) {
-            lock( @$jobq );
-            cond_wait( @$jobq ) while $$halted;
-            cond_broadcast( @$jobq );
+            lock( @$jobbelt );
+            cond_wait( @$jobbelt ) while $$halted;
+            cond_broadcast( @$jobbelt );
 
-#  Elseif there are now too many jobs in the queue
+#  Elseif there are now too many jobs in the belt
 #   Die now if there are no workers available to ever lower the number of jobs
-#   Lock the job queue
+#   Lock the job belt
 #   Set the job submission halted flag
 #   Wake up any threads that are waiting for jobs to be handled
 #   Wait until the halt flag is reset
 #   Notify the rest of the world again
 
-        } elsif (@$jobq > $maxjobs) {
+        } elsif (@$jobbelt > $maxjobs) {
 	    die "Too many jobs submitted while no workers available"
 	     unless $self->workers;
-	    lock( @$jobq );
+	    lock( @$jobbelt );
 	    $$halted = 1;
-            cond_broadcast( @$jobq );
-            cond_wait( @$jobq ) while $$halted;
-            cond_broadcast( @$jobq );
+            cond_broadcast( @$jobbelt );
+            cond_wait( @$jobbelt ) while $$halted;
+            cond_broadcast( @$jobbelt );
         }
     }
 
 # If we're streaming
 #  Die now if an individual jobid requested
-#  Enqueue with a jobid obtained on the fly
+#  Put in box with a jobid obtained on the fly
 
     if ($self->{'stream'}) {
         die "Cannot return individual results when streaming"
          if defined( wantarray );
-        $jobq->enqueue( $self->_jobid, \@_ );
+        $jobbelt->put( $self->_jobid, \@_ );
 
 # Elseif we want a jobid
 #  Obtain a jobid
-#  Enqueue with that jobid
+#  Put in box with that jobid
 #  And return with that jobid now
 
     } elsif (defined( wantarray )) {
         my $jobid = $self->_jobid;
-        $jobq->enqueue( $jobid, \@_ );
+        $jobbelt->put( $jobid, \@_ );
         return $jobid;
 
 # Else (not streaming and not interested in the result)
-#  Enqueue without a jobid
+#  Put in box without a jobid
 
     } else {
-        $jobq->enqueue( \@_ )
+        $jobbelt->put( \@_ )
     }
 } #job
 
@@ -218,7 +212,7 @@ sub waitfor {
 #  IN: 1 instantiated object
 # OUT: 1 number of jobs to be done still
 
-sub todo { shift->{'jobq'}->pending } #todo
+sub todo { shift->{'jobbelt'}->onbelt } #todo
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -266,12 +260,11 @@ sub result {
 # Obtain the frozen value
 # Remove it from the result hash
 
-    {
-     lock( $result );
+    {lock( $result );
      cond_wait( $result ) until exists $result->{$jobid};
      $value = $result->{$jobid};
      delete( $result->{$jobid} );
-    }
+    } #$result
 
 # Return the result of thawing
 
@@ -300,12 +293,11 @@ sub result_dontwait {
 # Obtain the frozen value
 # Remove it from the result hash
 
-    {
-     lock( $result );
+    {lock( $result );
      return unless exists $result->{$jobid};
      $value = $result->{$jobid};
      delete( $result->{$jobid} );
-    }
+    } #$result
 
 # Return the result of thawing
 
@@ -395,16 +387,16 @@ sub add {
     my @tid;
 
 # Thaw the original input parameters to
-# If there is a monitor queue but no thread
-#  Recreate the monitoring thread using the current monitoring queue
+# If there is a monitor belt but no thread
+#  Recreate the monitoring thread using the current monitoring belt
 
     @_ = @{Storable::thaw( $self->{'startup'} )};
-    if ($self->{'monitorq'} and not exists( $self->{'monitort'} ) ) {
-        @$self{qw(monitorq monitort)} = Thread::Queue::Any::Monitored->new(
+    if ($self->{'monitorb'} and not exists( $self->{'monitort'} ) ) {
+        @$self{qw(monitorb monitort)} = Thread::Conveyor::Monitored->new(
          {
           pre => $self->{'pre'},
           monitor => $self->{'monitor'},
-          queue => $self->{'monitorq'},
+          belt => $self->{'monitorb'},
           post => $self->{'post'},
 	  exit => $self->{'exit'},
          },
@@ -464,7 +456,7 @@ sub remove {
     if (defined( wantarray )) {
         foreach (1..$remove) {
             my $jobid = $self->_jobid;
-            $self->{'jobq'}->enqueue( 0,$jobid );
+            $self->{'jobbelt'}->put( 0,$jobid );
             push( @jobid,$jobid );
         }
 
@@ -472,7 +464,7 @@ sub remove {
 #  Just indicate we're want to stop as many as specified (without result saving)
 
     } else {
-        $self->{'jobq'}->enqueue( 0 ) foreach 1..$remove;
+        $self->{'jobbelt'}->put( 0 ) foreach 1..$remove;
     }
 
 # Return either the first or all of the jobids created
@@ -564,6 +556,17 @@ sub shutdown {
     $self->workers( 0 );
     $self->join( @{$self->{'workers'}} );
 
+# Obtain local copy of the job belt
+# While there are boxes on the belt (without taking them off)
+#  Outloop if there is a real job in the box
+#  Remove the finishing job (amount of workers to remove was too high)
+
+    my $jobbelt = $self->{'jobbelt'};
+    while (my ($jobid) = $jobbelt->peek_dontwait) {
+       last if $jobid;
+       $jobbelt->take;
+    }
+
 # If we were streaming
 #  Obtain the current stream ID, job ID and result hash
 #  Set the extra parameters to be passed to streamer if monitoring
@@ -572,7 +575,7 @@ sub shutdown {
 
     if (my $stream = $self->{'stream'}) {
         my ($streamid,$jobid,$result) = @$self{qw(streamid jobid result)};
-        my @extra = exists $self->{'monitorq'} ? ($self) : ();
+        my @extra = exists $self->{'monitorb'} ? ($self) : ();
 	lock( $result );
         my $last = $self->_first_todo_jobid;
 
@@ -597,7 +600,7 @@ sub shutdown {
 #  Wait for the thread to finish
 
     if (my $thread = $self->{'monitort'}) {
-        $self->{'monitorq'}->enqueue( undef );
+        $self->{'monitorb'}->put( undef );
 	delete( $self->{'monitort'} );
         $thread->join;
     }
@@ -658,7 +661,7 @@ sub notused {
 
 #---------------------------------------------------------------------------
 #  IN: 1 class (ignored)
-# OUT: 1 instantiated queue object
+# OUT: 1 instantiated pool object
 
 sub self { $SELF } #self
 
@@ -666,7 +669,7 @@ sub self { $SELF } #self
 #  IN: 1 class (ignored)
 # OUT: 1 instantiated monitor object
 
-sub monitor { Thread::Queue::Any::Monitored->self } #monitor
+sub monitor { Thread::Conveyor::Monitored->belt } #monitor
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object or class (ignored)
@@ -733,9 +736,9 @@ sub _random {
 # Obtain local copies from the hash for faster access
 # Perform the pre actions if there are any
 
-    my ($jobq,$do,$post,$result,$removed,$workers,
+    my ($jobbelt,$do,$post,$result,$removed,$workers,
         $running,$halted,$maxjobs,$minjobs) =
-     @$self{qw(jobq do post result removed workers
+     @$self{qw(jobbelt do post result removed workers
                running halted maxjobs minjobs)};
     $self->{'pre'}->( @_ ) if exists $self->{'pre'};
 
@@ -747,23 +750,23 @@ sub _random {
 
     my (@list,$running_now);
     while ($running_now = $$running) {
-        @list = $jobq->dequeue;
+        @list = $jobbelt->take;
 	last unless $list[0];
         $dont_set_result = undef;
 
 #  If there is amount of job limitation active
 #   If job submission is halted
 #    If current number of jobs is less than minimum number of jobs
-#     Lock access to the jobe queue
+#     Lock access to the job belt
 #     Reset the halted flag, allow job submissions again
 #     Wake up all of the other threads to allow them to submit again
 
         if ($maxjobs) {
             if ($$halted) {
-                if (@$jobq <= $minjobs) {
-                    lock( @$jobq );
+                if (@$jobbelt <= $minjobs) {
+                    lock( @$jobbelt );
                     $$halted = 0;
-                    cond_broadcast( @$jobq );
+                    cond_broadcast( @$jobbelt );
                 }
             }
         }
@@ -833,12 +836,12 @@ sub _stream {
 # Perform the pre actions if there are any
 # Set the extra parameters to be passed to streamer if monitoring
 
-    my ($jobq,$do,$post,$result,$stream,$streamid,
+    my ($jobbelt,$do,$post,$result,$stream,$streamid,
         $removed,$workers,$running,$halted,$maxjobs,$minjobs) =
-     @$self{qw(jobq do post result stream streamid
+     @$self{qw(jobbelt do post result stream streamid
                removed workers running halted maxjobs minjobs)};
     $self->{'pre'}->( @_ ) if exists $self->{'pre'};
-    my @extra = exists $self->{'monitorq'} ? ($self) : ();
+    my @extra = exists $self->{'monitorb'} ? ($self) : ();
 
 # Initialize the stuff that we need outside later
 # While we're handling requests, keeping copy of the flag on the fly
@@ -848,23 +851,23 @@ sub _stream {
 
     my (@list,$running_now);
     while ($running_now = $$running) {
-        @list = $jobq->dequeue;
+        @list = $jobbelt->take;
         last unless $jobid = $list[0];
         $dont_set_result = undef;
 
 #  If there is amount of job limitation active
 #   If job submission is halted
 #    If current number of jobs is less than minimum number of jobs
-#     Lock access to the jobe queue
+#     Lock access to the job belt
 #     Reset the halted flag, allow job submissions again
 #     Wake up all of the other threads to allow them to submit again
 
         if ($maxjobs) {
             if ($$halted) {
-                if (@$jobq <= $minjobs) {
-                    lock( @$jobq );
+                if (@$jobbelt <= $minjobs) {
+                    lock( @$jobbelt );
                     $$halted = 0;
-                    cond_broadcast( @$jobq );
+                    cond_broadcast( @$jobbelt );
                 }
             }
         }
@@ -893,26 +896,20 @@ sub _stream {
         my @param = $do->( @{$list[1]} );
         $jobs++;
 
-#  Make sure we are the only one doing this
+#  Make sure we're the only one accessing the result hash and stream id's
 #  Obtain the current stream ID (so we can use it later)
-#  If there is a result for this job (so we can stream at least one)
-#   Make sure we're the only one accessing the result hash
-#   For all of the results from the stream ID to this thread's job ID
-#    Outloop if there is no result yet
-#    Call the "stream" routine with the result
-#    Remove the result from the hash
+#  For all of the results from the stream ID to this thread's job ID
+#   Outloop if there is no result yet
+#   Call the "stream" routine with the result
+#   Remove the result from the hash
 
-        {
-         lock( $result );
-         lock( $streamid );
+        {lock( $result ); lock( $streamid );
          my $i = $$streamid;
-#         if (exists( $result->{$i} )) {
-             for (; $i < $jobid; $i++) {
-                 last unless exists( $result->{$i} );
-                 $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
-                 delete( $result->{$i} );
-             }
-#         }
+         for (; $i < $jobid; $i++) {
+             last unless exists( $result->{$i} );
+             $stream->( @extra,@{Storable::thaw( $result->{$i} )} );
+             delete( $result->{$i} );
+         } #$result,$streamid
 
 #  If all results until this job ID have been streamed
 #   If we need to save this result
@@ -1028,19 +1025,19 @@ sub _jobid {
 sub _first_todo_jobid {
 
 # Obtain the object
-# Obtain the reference to the job queue
-# Make sure we're the only one handling the job queue
+# Obtain the reference to the job belt
+# Make sure we're the only one handling the job belt
 
     my $self = shift;
-    my $jobq = $self->{'jobq'};
-    lock( $jobq );
+    my $jobbelt = $self->{'jobbelt'};
+    lock( $jobbelt );
 
-# For all the jobs in the queue
+# For all the jobs in the belt
 #  De-frost the values in there
 #  Return the job id if it is a job with a job id
 # Return the next job id that is going to be issued
 
-    foreach (@{$jobq}) {
+    foreach (@{$jobbelt}) {
         my @param = @{Storable::thaw( $_ )};
 	return $param[0] if @param == 2;
     }
@@ -1054,10 +1051,10 @@ sub _first_todo_jobid {
 sub _have_monitored {
 
 # Obtain the object
-# Enqueue the parameters with at least an empty string to prevent premature exit
+# Put the parameters with at least an empty string to prevent premature exit
 
     my $self = shift;
-    $self->{'monitorq'}->enqueue( @_ ? @_ : ('') );
+    $self->{'monitorb'}->put( @_ ? @_ : ('') );
 } #_have_monitored
 
 #---------------------------------------------------------------------------
@@ -1203,7 +1200,7 @@ The following class methods are available.
    minjobs => 5,      # default: maxjobs / 2
   },
 
-  qw(a b c)           # parameters to "pre" routine
+  qw(a b c)           # parameters to "pre" and "post" routines
 
  );
 
@@ -1376,10 +1373,6 @@ The specified subroutine should expect the following parameters to be passed:
 
  1..N  the values that were returned by the "do" subroutine
 
-To be able to use this function, the L<Thread::Queue::Any::Monitored> module
-must also be available.  It will be loaded automatically if it has not been
-C<use>d yet.
-
 The "monitor" routine is executed in its own thread.  This means that all
 results have to be passed between threads, and therefore be frozen and thawed
 with L<Storable>.  If you can handle the streaming from different threads,
@@ -1412,8 +1405,8 @@ to change the number of workers later.
 
  maxjobs => 25, # default: 5 * workers
 
-The "maxjobs" field specifies the B<maximum> number of jobs that can be waiting
-in the queue to be handled (job throttling).  If a new L<job> submission
+The "maxjobs" field specifies the B<maximum> number of jobs that can be sitting
+on the belt to be handled (job throttling).  If a new L<job> submission
 would exceed this amount, job submission will be halted until the number of
 jobs waiting to be handled as become at least as low as the amount specified
 with the "minjobs" field.
@@ -1429,7 +1422,7 @@ used for storing all of the job submission information.
  minjobs => 10, # default: maxjobs / 2
 
 The "minjobs" field specified the B<minimum> number of jobs that can be
-waiting in the queue to be handled before job submission is allowed again
+waiting on the belt to be handled before job submission is allowed again
 (job throttling).
 
 If job throttling is active and the "minjobs" field is not specified, then
@@ -1508,14 +1501,14 @@ If you want to wait for the job to be finished, use the L<result> method.
 The "todo" method returns the number of L<job>s that are still left to be
 done.
 
-#=head2 results
-#
-# $results = $pool->results;
-# @result = $pool->results;
-#
-#The "results" method returns the jobids of which there are results available
-#and which have not yet been fetched with L<result>.  Returns the number of
-#results available in scalar context.
+=head2 results
+
+ $results = $pool->results;
+ @result = $pool->results;
+
+The "results" method returns the jobids of which there are results available
+and which have not yet been fetched with L<result>.  Returns the number of
+results available in scalar context.
 
 =head2 add
 
@@ -1683,7 +1676,7 @@ subroutines only.
 
  $monitor = Thread::Pool->monitor;
 
-The class method "monitor" returns the Thread::Queue::Any::Monitored object
+The class method "monitor" returns the Thread::Conveyor::Monitored object
 that is associated with the pool.  It is available only if the "monitor"
 field was specified in L<new>.  And then only within the "pre", "do", "post",
 "stream" and "monitor" subroutines only.
@@ -1744,13 +1737,13 @@ code references can B<not> be serialized and therefore not be passed.
 
 =head1 EXAMPLES
 
-There is currently one example.
+There are currently two examples.
 
 =head2 simple asynchronous log file resolving filter
 
 This is an example of a very simple asynchronous log file resolver filter.
 
-Because the IP-number to domain name translation is dependent on external
+Because the IP number to domain name translation is dependent on external
 DNS servers, it can take quite some (wallclock) time before a response is
 returned by the C<gethostbyaddr> function.  In a single threaded environment,
 a single bad DNS server can severely slow down the resolving process.  In a
@@ -1758,13 +1751,15 @@ threaded environment, you can have one thread waiting for a slow DNS server
 while other threads are able to obtain answers in the mean time.
 
 This example uses a shared hash to keep results from DNS server responses,
-so that if an IP-number was attempted to be resolved once (either successfully
+so that if an IP number was attempted to be resolved once (either successfully
 or unsuccessfully), it will not be attempted again: instead the value from the
 hash will be assumed.
 
+ # You should always use strict!
  # Using Thread::Pool by itself is enough, no "use threads;" needed
- # Initialize the shared hash with IP-numbers and their results
+ # Initialize the shared hash with IP numbers and their results
 
+ use strict;
  use Thread::Pool;
  my %resolved : shared;
 
@@ -1787,10 +1782,11 @@ hash will be assumed.
  #  IN: 1 log line to resolve
  # OUT: 1 resolved log line
 
- # Substitute the IP-number at the start with the name or with the original
+ sub do {
+
+ # Substitute the IP number at the start with the name or with the original
  # Return the adapted value
 
- sub do {
    $_[0] =~ s#^(\d+\.\d+\.\d+\.\d+)#
     $resolved{$1} ||= gethostbyaddr( pack( 'C4',split(/\./,$1)),2 ) || $1#e;
    $_[0];
@@ -1802,13 +1798,83 @@ hash will be assumed.
 
  sub monitor { print $_[0] } #monitor
 
-This is a very simple filter.  There are a number of drawbacks to this
-simplistic approach.  They are:
+This is a very simple filter.  The main drawback is that many threads can
+be looking up the same IP number at the same time.
 
- - many more jobs can be added than workers can handle
- - multiple threads can be looking up the same IP-number at the same time
+=head2 another asynchronous log file resolving filter
 
-but these _can_ be fixed.  But they are left as an excercise to the reader.
+This is an example of a not so very simple asynchronous log file resolver
+filter.  This is in fact the base code for the L<Thread::Pool::Resolve>
+module.
+
+In this example, the L<dont_set_result> and L<set_result> methods are used
+to put up all lines with the same unresolved IP number in the same thread
+until the DNS server returns, either with or without a result.  Then all
+the lines with that IP number are handled by that thread: the other threads
+have long before that already continued attempting to handle other lines.
+
+Because only the "do" subroutine is different from the previous example,
+we're only showing that.
+
+ #--------------------------------------------------------------------
+ # Handle a single job
+ #  IN: 1 log line to resolve
+ # OUT: 1 resolved log line (if already resolved, else ignored)
+
+ sub do {
+
+ # Obtain the line to work with
+ # Return it now if it is already resolved (at least not an IP number there)
+ # Save the IP number for later usage, line is now without IP number
+
+   my $line = shift;
+   return $line unless $line =~ s#^(\d+\.\d+\.\d+\.\d+)##;
+   my $ip = $1;
+
+ # Make sure we're the only one to access the resolved hash now
+ # If there is already information for this IP number
+ #  Return what is there with the line if it was resolved already
+
+   {lock( %resolved );
+    if (exists( $resolved{$ip} )) {
+      return ($resolved{$ip} || $ip).$line unless ref( $resolved{$ip} );
+
+ #  Set the rest of the line in the todo hash, keyed to jobid
+ #  Set the flag that this result should not be set in the result hash
+ #  And return without anything (thread will continue with next job)
+
+      $resolved{$ip}->{Thread::Pool->jobid} = $line;
+      Thread::Pool->dont_set_result;
+      return;
+
+ # Else (first time this IP number is encountered)
+ #  Create a shared hash with the rest of the line keyed to the jobid
+ #  Save a reference to the hash in the todo hash as info for this IP number
+
+    } else {
+      my %hash : shared = (Thread::Pool->jobid => $line);
+      $resolved{$ip} = \%hash;
+    }
+   } #%resolved
+
+ # Do the actual name resolving (may take quite some time) or use IP number
+ # Obtain local copy of the Thread::Pool object
+ # Obtain local copy of the todo hash
+
+   my $domain = gethostbyaddr( pack( 'C4',split(/\./,$ip)),2 ) || $ip;
+   my $pool = Thread::Pool->self;
+   my $todo = $resolved{$ip};
+
+ # Make sure we're the only one accessing the resolved hash (rest of this sub)
+ # Set the results for all the lines with this IP number
+ # Remove the todo hash and replace by domain or blank string if unresolvable
+ # Make sure we don't set this result (it was set from the todo hash)
+
+   lock( %resolved );
+   $pool->set_result( $_,$domain.$todo->{$_} ) foreach keys %{$todo};
+   $resolved{$ip} = $domain eq $ip ? '' : $domain;
+   Thread::Pool->dont_set_result;
+ } #do
 
 =head1 AUTHOR
 
@@ -1824,6 +1890,6 @@ modify it under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<threads>, L<Thread::Queue::Any>, L<Storable>.
+L<threads>, L<Thread::Conveyor>, L<Thread::Conveyor::Monitored>, L<Storable>.
 
 =cut
