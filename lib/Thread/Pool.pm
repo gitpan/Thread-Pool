@@ -3,12 +3,12 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION = '0.27';
+$VERSION = '0.28';
 use strict;
 
 # Make sure we only load stuff when we actually need it
 
-use AutoLoader 'AUTOLOAD';
+use load;
 
 # Make sure we can do monitored belts
 
@@ -19,10 +19,10 @@ use Thread::Conveyor::Monitored ();
 # The current jobid, when available
 # Flag to indicate result should _not_ be saved (assume another thread will)
 
-my $SELF;
-my $remove_me;
-my $jobid;
-my $dont_set_result;
+our $SELF;
+our $remove_me;
+our $jobid;
+our $dont_set_result;
 
 # Number of times this namespace has been CLONEd
 # Set default optimization
@@ -46,6 +46,12 @@ our $FREQUENCY = Thread::Conveyor::Monitored->frequency;
 sub CLONE { $cloned++ } #CLONE
 
 #---------------------------------------------------------------------------
+
+# The following methods are only loaded on demand
+
+__END__
+
+#---------------------------------------------------------------------------
 #  IN: 1 instantiated object
 
 sub DESTROY {
@@ -62,12 +68,6 @@ sub DESTROY {
     return unless $self->{'cloned'} == $cloned;
     $self->shutdown if $self->{'autoshutdown'};
 } #DESTROY
-
-#---------------------------------------------------------------------------
-
-# AutoLoader takes over from here
-
-__END__
 
 #---------------------------------------------------------------------------
 
@@ -151,7 +151,7 @@ sub new {
 #  Initialize the workers threads list as tied and save the locking semaphore
 #  Make sure references exist in the object
 
-    if (defined( $Thread::Tie::VERSION )) {
+#    if (defined( $Thread::Tie::VERSION )) {
         $self->{'lock_workers'} = (tie my @workers, 'Thread::Tie')->semaphore;
         @$self{qw(workers)} = (\@workers);
 
@@ -159,10 +159,10 @@ sub new {
 #  Initialize the workers threads list as shared
 #  Make sure references exist in the object
 
-    } else {
-        my @workers : shared;
-        @$self{qw(workers)} = (\@workers);
-    }
+#    } else {
+#        my @workers : shared;
+#        @$self{qw(workers)} = (\@workers);
+#    }
 
 # Initialize the jobid counter as shared
 # Initialize the streamid counter as shared
@@ -1184,8 +1184,6 @@ Thread::Pool - group of threads for performing similar jobs
 
 =head1 SYNOPSIS
 
- use Thread::Tie; # only if you want to use memory saving Thread::Tie features
-
  use Thread::Pool;
  $pool = Thread::Pool->new(
   {
@@ -1279,13 +1277,6 @@ Unless told otherwise, all jobs that are assigned, will be executed before
 the pool is allowed to be destroyed.  If a "stream" or "monitor" routine
 is specified, then all results will be handled by that routine before the
 pool is allowed to be destroyed.
-
-Since as of this writing (threads::shared.pm, version 0.90) there are still
-memory leaks with using shared arrays and hashes, the Thread::Pool module
-will use the L<Thread::Tie> implementation for shared arrays and hashes if
-that module was loaded before the Thread::Pool object was created.  Please
-note that the Thread::Tie module is B<not> included in this package: you
-will need to get that seperately from CPAN.
 
 =head1 CLASS METHODS
 

@@ -1,3 +1,15 @@
+0.28	30 September 2002
+	Use "load.pm" instead of AutoLoader.  Increased dependency on
+        Thread::Conveyor and T::C::Monitored, which also use "load.pm" now.
+
+	Removed "our" from $VERSION, should shave off some bytes in
+	memory usage, as found from testing with Benchmark::Thread::Size.
+
+	22 September 2002
+	Removed some blurb about Thread::Tie.  Made internal use of
+	Thread::Tie unconditional, as Thread::Tie will always be loaded
+	because of Thread::Conveyor.  Spotted by Chris Rosebrugh.
+
 0.27    1 September 2002
         Increased dependency on Thread::Conveyor to 0.10, to ensure we have
         the latest and the best.

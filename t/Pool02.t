@@ -9,6 +9,8 @@ BEGIN {our $tests = 1 + (2*2*4*21)}
 use Test::More tests => $tests;
 use strict;
 
+$SIG{__DIE__} = sub { require Carp; Carp::confess() };
+
 diag( "Test streaming to memory" );
 
 BEGIN { use_ok('Thread::Pool') }
