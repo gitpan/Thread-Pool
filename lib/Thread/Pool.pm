@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.29';
+$VERSION = '0.30';
 use strict;
 
 # Make sure we only load stuff when we actually need it
@@ -1262,7 +1262,7 @@ to the next available worker.  If the result of the job is important, a
 job ID is issued.  The job ID can then later be used to obtain the L<result>.
 
 Initialization parameters can be passed during the creation of the
-threads::farm object.  The initialization ("pre") routine can be specified
+Thread::Pool object.  The initialization ("pre") routine can be specified
 as a name or as a reference to a (anonymous) subroutine.  The "pre" routine
 can e.g. be used to create a connection to an external source using a
 non-threadsafe library.

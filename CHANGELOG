@@ -1,3 +1,11 @@
+0.30	9 November 2003
+	Increased dependency on Thread::Conveyor to 0.15 because of problem
+	fix for 5.8.2.
+
+	3 October 2003
+	Found still one reference to original name threads::farm in the POD.
+	Now removed.
+
 0.29	11 August 2003
 	Cleaned Makefile.PL and upgraded dependencies and copyright.
 
