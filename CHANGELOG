@@ -1,3 +1,30 @@
+0.03	14 July 2002
+	Made sure that once the pool is shut down, calling method "shutdown"
+	again will not do anything.  At least not until method "add" is
+	called.  This should fix the situation where the pool is specifically
+	shut down, and again shut down when the object is destroyed.
+
+	Added method "notused" which returns the number of threads that
+	were removed before they got a chance to do anything.  Can be used
+	to give you a heuristic of how many threads you actually need for a
+	specific application.
+
+	Added functionality for streaming results.  This allows you to
+	specify a "stream" subroutine that allows you to handle the result
+	of the asynchronously executed "do" subroutines in the order in
+	which the jobs were submitted (rather than in the order in which the
+	results were obtained).
+
+	Added "remove_me" functionality, which allows a "do" routine to tell
+	its dispatcher that the worker thread should be removed.
+
+	Added Perl version requirement to README and pod, per suggestion of
+	mrbbking.  Added -use threads- to Makefile.PL to cause breakage of
+	the install process if threads are not available.
+
+	Added specific check for named subroutine reference.  The old
+	Thread::Pool module from CPAN also allowed this.
+
 0.02	13 July 2002
 	Added initial version of test-suite.
 

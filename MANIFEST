@@ -5,4 +5,5 @@ TODO
 VERSION
 Makefile.PL
 lib/Thread/Pool.pm
-t/Pool.t
+t/Pool01.t
+t/Pool02.t

@@ -5,27 +5,29 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use Test::More tests => 25;
+use strict;
+use Test::More tests => 39;
 
 BEGIN { use_ok('Thread::Pool') }
 
 my $pool = Thread::Pool->new(
  {
-  pre		=> \&pre,
-  do		=> \&do,
+  pre		=> 'pre',
+  do		=> 'main::do',
   post		=> \&post,
  },
  qw(a b c)
 );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
-cmp_ok( $pool->workers,'==',1,		'check number of workers' );
+cmp_ok( scalar($pool->workers),'==',1,	'check number of workers' );
 
 $pool->job( qw(d e f) );	# do a job, for statistics only
+
 my $todo = $pool->todo;
 ok( $todo >= 0 and $todo <= 1,		'check # jobs todo, #1' );
 my $done = $pool->done;
 ok( $done >= 0 and $done <= 1,		'check # jobs done, #1' );
-cmp_ok( $pool->workers,'==',1,		'check number of workers, #1' );
+cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #1' );
 
 my $jobid1 = $pool->job( qw(g h i) );
 cmp_ok( $jobid1,'==',1,			'check first jobid' );
@@ -65,10 +67,42 @@ cmp_ok( scalar($pool->workers),'==',4,	'check number of workers, #5' );
 cmp_ok( scalar($pool->removed),'==',6,	'check number of removed, #2' );
 
 $pool->shutdown;
+cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads' );
+
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #6' );
 cmp_ok( scalar($pool->removed),'==',10,	'check number of removed, #3' );
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #3' );
 cmp_ok( $pool->done,'==',3,		'check # jobs done, #3' );
+
+my $notused = $pool->notused;
+ok( $notused >= 0 and $notused < 10,	'check not-used threads, #1' );
+
+my $jobid4 = $pool->job( 1,2,3 );
+cmp_ok( $jobid4,'==',4,			'check fourth jobid' );
+
+my $tid = $pool->add;
+cmp_ok( $tid,'==',11,			'check tid, #2' );
+cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #7' );
+
+@result = $pool->result( $jobid4 );
+is( join('',@result),'321',		'check result after add' );
+
+my $jobid5 = $pool->job( 'remove_me' );
+cmp_ok( $jobid5,'==',5,			'check fifth jobid' );
+
+my ($result) = $pool->result( $jobid5 );
+is( $result,'remove_me',		'check result remove_me' );
+
+cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #4' );
+cmp_ok( $pool->done,'==',5,		'check # jobs done, #4' );
+cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
+cmp_ok( scalar($pool->removed),'==',11,	'check number of removed, #4' );
+
+$pool->shutdown;
+cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads' );
+
+$notused = $pool->notused;
+ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );
 
 sub pre {
   my $self = shift;
@@ -78,6 +112,7 @@ sub pre {
 sub do {
   my $self = shift;
   my @pre = $self->pre;
+  $self->remove_me if $_[0] eq 'remove_me';
   reverse @_;
 }
 
