@@ -5,9 +5,9 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use threads qw(yield);
+use threads ();
 use strict;
-use Test::More tests => 1 + (6*19);
+use Test::More tests => 1 + (2*5*19);
 
 BEGIN { use_ok('Thread::Pool') }
 
@@ -15,22 +15,35 @@ my $check;
 my $format = '%5d';
 my @list : shared;
 
-foreach (
+my @amount = (
  [10,0],
  [5,5],
  [1,10000],
  [10,1000],
  [int(1+rand(9)),int(1+rand(10000))],
- [int(1+rand(9)),int(1+rand(10000))],
-) {
+);
 
-my ($t,$times) = @{$_};
+
+_runtest( @{$_},qw(do memory) ) foreach @amount;
+_runtest( @{$_},qw(yield memory) ) foreach @amount;
+
+
+sub do { sprintf( $format,$_[1] ) }
+
+sub yield { threads::yield(); sprintf( $format,$_[1] ) }
+
+sub memory { lock( @list ); push( @list,$_[1] ) }
+
+
+sub _runtest {
+
+my ($t,$times,$do,$stream) = @_;
 diag( "Now testing $t thread(s) for $times jobs" );
 
 $check = '';
 @list = ('');
 
-my $pool = Thread::Pool->new( {workers => $t,qw(do do stream stream)} );
+my $pool = Thread::Pool->new( {workers => $t,do => $do, stream => $stream} );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 cmp_ok( scalar($pool->workers),'==',$t,	'check initial number of workers' );
 
@@ -40,7 +53,7 @@ foreach ( 1..$times ) {
 }
 
 $pool->shutdown;
-cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads, #1' );
+cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #1' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #1' );
 cmp_ok( scalar($pool->removed),'==',$t, 'check number of removed, #1' );
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #1' );
@@ -67,7 +80,7 @@ $pool->workers( $t+$t);
 cmp_ok( scalar($pool->workers),'==',$t+$t, 'check number of workers, #2' );
 
 $pool->shutdown;
-cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads, #2' );
+cmp_ok( scalar(()=threads->list),'==',0,'check for remaining threads, #2' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #2' );
 cmp_ok( scalar($pool->removed),'==',$t+$t+$t, 'check number of removed, #2' );
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #2' );
@@ -88,8 +101,4 @@ cmp_ok( $#list,'==',$times+$times,	'check length of list, #2' );
 #pass( "Check succeeded" ) unless $failed;
 is( join('',@list),$check.$check,	'check second result' );
 
-} #foreach
-
-sub do { yield(); sprintf( $format,$_[1] ) }
-
-sub stream { lock( @list ); push( @list,$_[1] ) }
+} #_runtest

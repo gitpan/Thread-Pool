@@ -6,7 +6,7 @@ BEGIN {				# Magic Perl CORE pragma
 }
 
 use strict;
-use Test::More tests => 37;
+use Test::More tests => 38;
 
 BEGIN { use_ok('Thread::Pool') }
 
@@ -66,7 +66,7 @@ $pool->shutdown;
 foreach (threads->list) {
   warn "Thread #".$_->tid." still alive\n";
 }
-cmp_ok( scalar(threads->list),'==',0,	'check for remaining threads' );
+cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
 
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #6' );
 cmp_ok( scalar($pool->removed),'==',10,	'check number of removed, #3' );
@@ -88,20 +88,22 @@ cmp_ok( scalar($pool->workers),'==',1,	'check number of workers, #7' );
 @result = $pool->result( $jobid4 );
 is( join('',@result),'321',		'check result after add' );
 
+@result = $pool->waitfor( qw(m n o) );
+is( join('',@result),'onm',		'check result waitfor' );
+
 my $jobid5 = $pool->job( 'remove_me' );
-cmp_ok( $jobid5,'==',5,			'check fifth jobid' );
+cmp_ok( $jobid5,'==',6,			'check fifth jobid' );
 
 my ($result) = $pool->result( $jobid5 );
 is( $result,'remove_me',		'check result remove_me' );
 
 cmp_ok( $pool->todo,'==',0,		'check # jobs todo, #4' );
-cmp_ok( $pool->done,'==',5,		'check # jobs done, #4' );
+cmp_ok( $pool->done,'==',6,		'check # jobs done, #4' );
 cmp_ok( scalar($pool->workers),'==',0,	'check number of workers, #7' );
 cmp_ok( scalar($pool->removed),'==',11,	'check number of removed, #4' );
 
 $pool->shutdown;
-@thread = map {$_->tid} threads->list;
-cmp_ok( scalar(@thread),'==',0,		'check for remaining threads' );
+cmp_ok( scalar(()=threads->list),'==',0, 'check for remaining threads' );
 
 $notused = $pool->notused;
 ok( $notused >= 0 and $notused < 11,	'check not-used threads, #2' );

@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.11';
+$VERSION = '0.12';
 use strict;
 
 # Make sure we can do threads
@@ -57,15 +57,19 @@ sub new {
 # Initialize the jobid counter as shared
 # Initialize the result hash as shared
 # Initialize the streamid counter as shared
-# Make sure references exist in the object
+# Initialize the running flag
 
     my @workers : shared;
     my %removed : shared;
     my $jobid : shared = 1;
     my %result : shared;
     my $streamid : shared = 1;
-    @$self{qw(workers removed jobid result streamid)} =
-     (\@workers,\%removed,\$jobid,\%result,\$streamid);
+    my $running : shared = 1;
+
+# Make sure references exist in the object
+
+    @$self{qw(workers removed jobid result streamid running)} =
+     (\@workers,\%removed,\$jobid,\%result,\$streamid,\$running);
 
 # Save a frozen value to the parameters for later hiring
 # Add the number of workers indicated
@@ -111,6 +115,20 @@ sub job {
         $self->{'queue'}->enqueue( \@_ )
     }
 } #job
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2..N parameters to be passed for this job
+# OUT: 1..N parameters returned from the job
+
+sub waitfor {
+
+# Obtain the object
+# Submit the job, obtain the jobid and wait for the result
+
+    my $self = shift;
+    $self->result( $self->job( @_ ) );
+} #waitfor
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -228,8 +246,7 @@ sub workers {
 #  Die now if we're trying to set number or workers in wrong thread
 
     if (@_) {
-        die "Can only set number of worker threads from the originating thread"
-         unless threads->tid == $self->{'originatingid'};
+        $self->_check_originating_thread( 'workers' );
 
 #  Make sure we're the only one adding or removing
 #  Obtain current number of workers
@@ -266,8 +283,7 @@ sub add {
 # Die now if not in the correct thread
 
     my $self = shift;
-    die "Can only add worker threads from the originating thread"
-     unless threads->tid == $self->{'originatingid'};
+    $self->_check_originating_thread( 'add' );
 
 # Obtain the number of workers to add
 # Die now if not a proper number of workers to add
@@ -316,8 +332,7 @@ sub remove {
 # Die now if not in the correct thread
 
     my $self = shift;
-    die "Can only remove worker threads from the originating thread"
-     unless threads->tid == $self->{'originatingid'};
+    $self->_check_originating_thread( 'remove' );
 
 # Obtain the number of workers to remove
 # Die now if improper number of workers to remove
@@ -380,8 +395,7 @@ sub join {
 # Obtain local copies of removed hash and workers list
 
     my $self = shift;
-    die "Can only join in the originating thread"
-     unless threads->tid == $self->{'originatingid'};
+    $self->_check_originating_thread( 'join' );
     my ($removed,$workers) = @$self{qw(removed workers)};
 
 # Make sure we're the only ones doing the workers list
@@ -437,8 +451,7 @@ sub shutdown {
 # Return now if are already shut down
 
     my $self = shift;
-    die "Can only shutdown in the originating thread"
-     unless threads->tid == $self->{'originatingid'};
+    $self->_check_originating_thread( 'shutdown' );
     return if $self->{'shutdown'};
 
 # If there are still active workers available
@@ -481,6 +494,28 @@ sub shutdown {
 
     $self->{'shutdown'} = 1;
 } #shutdown
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+
+sub abort {
+
+# Obtain the object
+# Die now if in the wrong thread
+
+    my $self = shift;
+    $self->_check_originating_thread( 'abort' );
+
+# Reset the flag that we're running
+# Loop while there are still workers active
+# Set the running flag again (in case workers get added later)
+# Collect the actual threads
+
+    ${$self->{'running'}} = 0;
+    threads::yield() while $self->workers;
+    ${$self->{'running'}} = 1;
+    $self->join;
+} #abort
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -531,8 +566,8 @@ sub _random {
 # Obtain local copies from the hash for faster access
 # Perform the pre actions, replace coderef by a reference to the result
 
-    my ($queue,$do,$post,$result,$removed,$workers) =
-     @$self{qw(queue do post result removed workers)};
+    my ($queue,$do,$post,$result,$removed,$workers,$running) =
+     @$self{qw(queue do post result removed workers running)};
     $self->{'pre'} = [exists $self->{'pre'} ? $self->{'pre'}->($self,@_) : ()];
 
 # Initialize the list of parameters returned (we need it outside later)
@@ -540,8 +575,8 @@ sub _random {
 #  Fetch the next job when it becomes available
 #  Outloop if we're supposed to die
 
-    my @list;
-    while (1) {
+    my (@list,$running_now);
+    while ($running_now = $$running) {
         @list = $queue->dequeue;
 	last unless $list[0];
 
@@ -567,16 +602,19 @@ sub _random {
         last;
     }
 
-# If someone is interested in the result of "remove" (so we have a jobid)
-#  Execute the post-action (if there is one) and save the frozen result
-# Else (nobody's interested)
-#  Execute the post-action if there is one
+# If we're not aborting
+#  If someone is interested in the result of "remove" (so we have a jobid)
+#   Execute the post-action (if there is one) and save the frozen result
+#  Else (nobody's interested)
+#   Execute the post-action if there is one
 # Mark this worker thread as removed
 
-    if ($list[1]) {
-	$self->_freeze( $list[1], $post ? $post->( $self,@_ ) : () );
-    } else {
-        $post->( $self,@_ ) if $post;
+    if ($running_now) {
+        if ($list[1]) {
+            $self->_freeze( $list[1], $post ? $post->( $self,@_ ) : () );
+        } else {
+            $post->( $self,@_ ) if $post;
+        }
     }
     { lock( $removed ); $self->{'removed'}->{$tid} = $jobs; }
 } #_random
@@ -600,17 +638,17 @@ sub _stream {
 # Obtain local copies from the hash for faster access
 # Perform the pre actions, replace coderef by a reference to the result
 
-    my ($queue,$do,$post,$result,$stream,$streamid,$removed,$workers) =
-     @$self{qw(queue do post result stream streamid removed workers)};
+    my ($queue,$do,$post,$result,$stream,$streamid,$removed,$workers,$running) =
+     @$self{qw(queue do post result stream streamid removed workers running)};
     $self->{'pre'} = [exists $self->{'pre'} ? $self->{'pre'}->($self,@_) : ()];
 
 # Initialize the stuff that we need outside later
-# While we're handling requests
+# While we're handling requests, keeping copy of the flag on the fly
 #  Fetch the next job when it becomes available
 #  Outloop if we're supposed to die
 
-    my (@list,$jobid);
-    while (1) {
+    my (@list,$jobid,$running_now);
+    while ($running_now = $$running) {
         @list = $queue->dequeue;
 	last unless $jobid = $list[0];
 
@@ -642,10 +680,8 @@ sub _stream {
         {
          lock( $streamid );
          my $i = $$streamid;
-my $from = 0;
          for (; $i < $jobid; $i++) {
              last unless exists( $result->{$i} );
-$from ||= $i;
 	     {
 	      lock( $result );
               $stream->( $self, @{Storable::thaw( $result->{$i} )} );
@@ -678,16 +714,19 @@ $from ||= $i;
         last;
     }
 
-# If someone is interested in the result of <end> (so we have a jobid)
-#  Execute the post-action (if there is one) and save the frozen result
-# Else (nobody's interested)
-#  Execute the post-action if there is one
+# If we're not aborting
+#  If someone is interested in the result of <end> (so we have a jobid)
+#   Execute the post-action (if there is one) and save the frozen result
+#  Else (nobody's interested)
+#   Execute the post-action if there is one
 # Mark this worker thread as removed
 
-    if ($list[1]) {
-	$self->_freeze( $list[1], $post ? $post->( $self,@_ ) : () );
-    } else {
-        $post->( $self,@_ ) if $post;
+    if ($running_now) {
+        if ($list[1]) {
+            $self->_freeze( $list[1], $post ? $post->( $self,@_ ) : () );
+        } else {
+            $post->( $self,@_ ) if $post;
+        }
     }
     { lock( $removed ); $self->{'removed'}->{$tid} = $jobs; }
 } #_stream
@@ -722,6 +761,18 @@ sub _makecoderef {
         $self->{$_} = \&{$self->{$_}};
     }
 } #_makecoderef
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2 name of subroutine that is not allowed to be called
+
+sub _check_originating_thread {
+
+# Die now if in the wrong thread
+
+    die qq(Can only call "$_[1]" in the originating thread)
+     unless threads->tid == $_[0]->{'originatingid'};
+} #_check_originating_thread
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -845,6 +896,9 @@ Thread::Pool - group of threads for performing similar jobs
  @result = $pool->result_dontwait( $jobid ); # do _not_ wait for result
  print "Result is @result\n";          # may be empty when not ready yet
 
+ @result = $pool->waitfor( qw(m n o) ); # submit and wait for result
+ print "Result is @result\n";
+
  $pool->add;           # add worker(s)
  $pool->remove;        # remove worker(s)
  $pool->workers( 10 ); # set number of workers
@@ -857,6 +911,7 @@ Thread::Pool - group of threads for performing similar jobs
 
  $pool->autoshutdown( 1 ); # shutdown when object is destroyed
  $pool->shutdown;          # wait until all jobs done
+ $pool->abort;             # finish current job and remove all workers
 
  $done    = $pool->done;   # simple thread-use statistics
  $notused = $pool->notused;
@@ -1096,13 +1151,28 @@ The following methods can be executed on the Thread::Pool object.
  $pool->job( @parameter );		# does not save result
 
 The "job" method specifies a job to be executed by any of the available
-L<workers>.  Which worker will execute the job, is indeterminate.
+L<workers>.  Which worker will execute the job, is indeterminate.  When it
+will happen, depends on the number of jobs that still have to be done when
+this job was submitted.
 
 The input parameters are passed to the "do" subroutine as is.
 
 If a return value is requested, then the return value(s) of the "do"
 subroutine will be saved.  The returned value is a job ID that should be
 used as the input parameter to L<result> or L<result_dontwait>.
+
+=head2 waitfor
+
+ @result = $pool->waitfor( @parameter ); # submit job and wait for result
+
+The "waitfor" method specifies a job to be executed, wait for the result to
+become ready and return the result.  It is in fact a shortcut for using
+L<job> and L<result>.
+
+The input parameters are passed to the "do" subroutine as is.
+
+The return value(s) are what was returned by the "do" routine.  The meaning
+of the return value(s) is entirely up to you as the developer.
 
 =head2 result
 
@@ -1242,16 +1312,32 @@ automatic L<shutdown> should be performed when the object is destroyed.
 
  $pool->shutdown;
 
-The "shutdown" method waits for all L<job>s to be executed, then L<remove>s
-all worker threads and then returns.
+The "shutdown" method waits for all L<job>s to be executed, L<remove>s
+all worker threads, handles any results that still need to be streamed, before
+it returns.  Call the L<abort> method if you do not want to wait until all
+jobs have been executed.
 
 It is called automatically when the object is destroyed, unless specifically
 disabled by providing a false value with the "autoshutdown" field when
 creating the pool with L<new>, or by calling the L<autoshutdown> method.
 
-Please note that the "shutdown" does not disable anything.  It just shuts
-down all of the worker threads.  After a shutdown it B<is> possible to add
-L<job>s, but they won't get done until workers are L<add>ed.
+Please note that the "shutdown" method does not disable anything.  It just
+shuts all of the worker threads down.  After a shutdown it B<is> possible
+to add L<job>s, but they won't get done until workers are L<add>ed.
+
+=head2 abort
+
+The "abort" method waits for all worker threads to finish their B<current>
+job, L<remove>s all worker threads, before it returns.  Call the L<shutdown>
+method if you want to wait until all jobs have been done.
+
+Please note that the "abort" method does not disable anything.  It just
+shuts all of the worker threads down.  After an abort it B<is> possible
+to add L<job>s, but they won't get done until workers are L<add>ed.
+
+Also note that any streamed results are B<not> handled.  If you want to
+handle any streamed results, you can call the L<shutdown> method B<after>
+calling the "abort" method.
 
 =head2 done
 
@@ -1311,6 +1397,10 @@ Passing unshared values between threads is accomplished by serializing the
 specified values using C<Storable>.  This allows for great flexibility at
 the expense of more CPU usage.  It also limits what can be passed, as e.g.
 code references can B<not> be serialized and therefore not be passed.
+
+=head1 EXAMPLES
+
+For now the only examples available, are those found in the "t" directory.
 
 =head1 AUTHOR
 

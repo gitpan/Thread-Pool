@@ -1,3 +1,13 @@
+0.12	16 July 2002
+	Added method "waitfor" as a shortcut for using "job" and "result".
+
+	Moved checks for originating thread to new internal method
+	_check_originating_thread.
+
+	Added method "abort" to have all the worker threads stop after they're
+	finished with their current job.  Adapted new, _random and _stream
+	for this new feature.
+
 0.11	15 July 2002
 	Bumped up version to 0.11 to be higher than Malcolm Beattie's original
 	Thread::Pool module on CPAN.  No other changes were made.
