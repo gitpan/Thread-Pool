@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.04';
+$VERSION = '0.11';
 use strict;
 
 # Make sure we can do threads

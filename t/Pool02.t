@@ -25,7 +25,7 @@ foreach (
 ) {
 
 my ($t,$times) = @{$_};
-diag( "Now testing $t thread(s) for $times iterations" );
+diag( "Now testing $t thread(s) for $times jobs" );
 
 $check = '';
 @list = ('');
@@ -60,7 +60,7 @@ cmp_ok( $#list,'==',$times,		'check length of list, #1' );
 #pass( "Check succeeded" ) unless $failed;
 is( join('',@list),$check,		'check first result' );
 
-diag( "Now testing ".($t+$t)." thread(s) for $times iterations" );
+diag( "Now testing ".($t+$t)." thread(s) for $times jobs" );
 $pool->job( $_ ) foreach 1..$times;
 
 $pool->workers( $t+$t);
