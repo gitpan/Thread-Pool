@@ -1,3 +1,10 @@
+0.25	27 August 2002
+	Added support for checkpointing on the monitor thread + documentation
+	+ adaptation of the test-suite.
+
+	Raised dependency on Thread::Conveyor::Monitored to take advantage of
+	the new checkpointing feature.
+
 0.24	14 August 2002
 	Raised dependency on Thread::Conveyor again to take advantage of
 	possible problem fix.

@@ -10,6 +10,6 @@ WriteMakefile (
  VERSION_FROM	=> 'lib/Thread/Pool.pm',
  PREREQ_PM	=> {
                     'Thread::Conveyor' => '0.07',
-                    'Thread::Conveyor::Monitored' => '0.05',
+                    'Thread::Conveyor::Monitored' => '0.07',
                    },
 );

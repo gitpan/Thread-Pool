@@ -7,11 +7,12 @@ BEGIN {				# Magic Perl CORE pragma
 
 use strict;
 use IO::Handle; # needed, cause autoflush method doesn't load it
-use Test::More tests => 2 + (2*2*3*23);
+use Test::More tests => 3 + (2*2*5*25);
 
-diag( "Test monitoring to file" );
+diag( "Test monitoring to file with checkpointing" );
 
 BEGIN { use_ok('Thread::Pool') }
+cmp_ok( Thread::Pool->frequency( 10 ),'==',10,	'check default frequency' );
 
 my $check;
 my $format = '%5d';
@@ -19,13 +20,14 @@ my @list;
 
 my $file = 'anymonitor';
 my $handle;
+my $checkpointed : shared;
 
-# [1,1000],
-# [int(2+rand(8)),int(1+rand(1000))],
 my @amount = (
  [10,0],
  [5,5],
  [10,100],
+ [1,1000],
+ [int(2+rand(8)),int(1+rand(1000))],
 );
 
 
@@ -41,16 +43,18 @@ sub post {
 
 sub do { sprintf( $format,$_[0] ) }
 
-sub yield { threads::yield(); sprintf( $format,$_[0] ) }
+sub yield { threads->yield; sprintf( $format,$_[0] ) }
 
 sub file { print $handle $_[0] }
 
-foreach my $optimize (qw(cpu memory)) {
-  diag( qq(*** Test using fast "do" optimize for $optimize ***) );
-  _runtest( $optimize,@{$_},qw(pre do file post) ) foreach @amount;
+sub checkpoint { $checkpointed++ }
 
-  diag( qq(*** Test using slower "yield" optimize for $optimize ***) );
-  _runtest( $optimize,@{$_},qw(pre yield file post) ) foreach @amount;
+foreach my $optimize (qw(cpu memory)) {
+  diag( qq(*** Test using faster "do", optimize for $optimize ***) );
+  _runtest( $optimize,@{$_},qw(pre do file post checkpoint) ) foreach @amount;
+
+  diag( qq(*** Test using slower "yield", optimize for $optimize ***) );
+  _runtest( $optimize,@{$_},qw(pre yield file post checkpoint)) foreach @amount;
 }
 
 ok( unlink( $file ),			'check unlinking of file' );
@@ -58,10 +62,13 @@ ok( unlink( $file ),			'check unlinking of file' );
 
 sub _runtest {
 
-my ($optimize,$t,$times,$pre,$do,$monitor,$post) = @_;
+my ($optimize,$t,$times,$pre,$do,$monitor,$post,$cp) = @_;
 diag( "Now testing $t thread(s) for $times jobs" );
 
-my $pool = pool( $optimize,$t,$pre,$do,$monitor,$post,$file );
+my $checkpoints = int($times/10);
+$checkpointed = 0;
+
+my $pool = pool( $optimize,$t,$pre,$do,$monitor,$post,$cp,$file );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 cmp_ok( scalar($pool->workers),'==',$t,	'check initial number of workers' );
 
@@ -85,8 +92,11 @@ open( my $in,"<$file" ) or die "Could not read $file: $!";
 is( join('',<$in>),$check,		'check first result' );
 close( $in );
 
+cmp_ok( $checkpointed,'==',$checkpoints,'check correct # checkpoints, #1' );
+$checkpointed = 0;
+
 diag( "Now testing ".($t+$t)." thread(s) for $times jobs" );
-$pool = pool( $optimize,$t,$pre,$do,$monitor,$post,$file );
+$pool = pool( $optimize,$t,$pre,$do,$monitor,$post,$cp,$file );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
 cmp_ok( scalar($pool->workers),'==',$t,	'check initial number of workers' );
 
@@ -109,6 +119,8 @@ open( $in,"<$file" ) or die "Could not read $file: $!";
 is( join('',<$in>),$check,		'check second result' );
 close( $in );
 
+cmp_ok( $checkpointed,'==',$checkpoints,'check correct # checkpoints, #2' );
+
 } #_runtest
 
 
@@ -120,6 +132,7 @@ sub pool { Thread::Pool->new(
   do => shift,
   monitor => shift,
   post => shift,
+  checkpoint => shift,
   maxjobs => undef,
  },
  shift

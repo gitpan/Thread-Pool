@@ -22,6 +22,7 @@ can_ok( $pool,qw(
  notused
  done
  dont_set_result
+ frequency
  job
  jobid
  join

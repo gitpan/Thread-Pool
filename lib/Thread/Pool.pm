@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-our $VERSION : unique = '0.24';
+our $VERSION : unique = '0.25';
 use strict;
 
 # Make sure we can do monitored belts
@@ -23,8 +23,10 @@ my $jobid;
 my $dont_set_result;
 
 # Set default optimization
+# Set default checkpoint frequency
 
 my $OPTIMIZE = 'memory';
+my $FREQUENCY = Thread::Conveyor::Monitored->frequency;
 
 # Satisfy -require-
 
@@ -73,19 +75,22 @@ sub new {
 #  Create a monitored belt
 #  Set the streaming routine that sends to the monitor
 
-        $self->_makecoderef( caller().'::',qw(pre monitor post) );
+        $self->_makecoderef( caller().'::',qw(pre monitor post checkpoint) );
         $self->{'monitor_belt'} = Thread::Conveyor::Monitored->new(
          {
-          optimize => $self->{'optimize'},
-          pre => $self->{'pre'},
-          monitor => $self->{'monitor'},
-          post => $self->{'post'},
-          exit => $self->{'exit'},
-          maxboxes => $self->{'maxjobs'},
-          minboxes => $self->{'minjobs'},
+          optimize   => $self->{'optimize'},
+          pre        => $self->{'pre'},
+          monitor    => $self->{'monitor'},
+          post       => $self->{'post'},
+          exit       => $self->{'exit'},
+          checkpoint => $self->{'checkpoint'},
+          frequency  => $self->{'checkpoint'} ?
+	   $self->{'frequency'} || $FREQUENCY : undef,
+          maxboxes   => $self->{'maxjobs'},
+          minboxes   => $self->{'minjobs'},
          },
-	 @_
-	);
+         @_
+        );
         $self->{'stream'} = \&_have_monitored;
     }
 
@@ -145,6 +150,31 @@ sub new {
     $self->add( $add );
     return $self;
 } #new
+
+#---------------------------------------------------------------------------
+#  IN: 1 class (ignored) or instantiated object
+#      2 new default checkpoint frequency (if called as class method only)
+# OUT: 1 default frequency
+
+sub frequency {
+
+# Obtain the object
+# If called as an object method
+#  Return undef if no checkpointing active
+#  Return frequency with which checkpointing is occurring
+
+    my $self = shift;
+    if (ref($self)) {
+        return unless $self->{'checkpoint'};
+        return $self->{'frequency'} || $FREQUENCY;
+    }
+
+# Set new default frequency if specified
+# Return current default frequency
+
+    $FREQUENCY = shift if @_;
+    $FREQUENCY;
+} #frequency
 
 #---------------------------------------------------------------------------
 #  IN: 1 class (ignored)
@@ -708,7 +738,7 @@ sub abort {
     ${$self->{'running'}} = 0;
     while ($self->workers) {
         $self->workers( 0 ) unless $self->todo;
-        threads::yield();
+        threads->yield;
     }
     ${$self->{'running'}} = 1;
     $self->join;
@@ -1162,6 +1192,9 @@ Thread::Pool - group of threads for performing similar jobs
    monitor => sub { print "monitor with @_\n",
    pre_post_monitor_only => 0, # default: 0 = also for "do"
 
+   checkpoint => sub { print "checkpointing\n" },
+   frequency => 1000,
+
    autoshutdown => 1, # default: 1 = yes
 
    workers => 10,     # default: 1
@@ -1264,6 +1297,8 @@ The following class methods are available.
 
    monitor => sub { print "monitor with @_\n",   # default: none
    pre_post_monitor_only => 0, # default: 0 = also for "do"
+   checkpoint => \&checkpoint,
+   frequency => 1000,
 
    autoshutdown => 1, # default: 1 = yes
 
@@ -1481,6 +1516,48 @@ When the "pre" and "post" routine are called for the "do" subroutine, the
 L<self> class method returns the Thread::Pool object (which it doesn't do
 when called in the "monitor" routine).
 
+=item checkpoint
+
+ checkpoint => 'checkpointing',			# assume caller's namespace
+
+or:
+
+ checkpoint => 'Package::checkpointing',
+
+or:
+
+ checkpoint => \&SomeOther::checkpointing,
+
+or:
+
+ checkpoint => sub {print "anonymous sub to do checkpointing\n"},
+
+The "checkpoint" field specifies the subroutine to be executed everytime a
+checkpoint should be made by a monitoring routine (e.g. for saving or updating
+status).  It must be specified as either the name of a subroutine or as a
+reference to a (anonymous) subroutine.
+
+It only makes sense to specify a checkpoint routine if there is also a
+monitoring routine specified.  No checkpointing will occur by default if a
+monitoring routine B<is> specified.  The frequency of checkpointing can
+be specified with the "frequency" field.
+
+The specified subroutine should not expect any parameters to be passed.  Any
+values returned by the checkpointing routine, will be lost.
+
+=item frequency
+
+ frequency => 100,                             # default = 1000
+
+The "frequency" field specifies the number of jobs that should have been
+monitored before the "checkpoint" routine is called.  If a checkpoint routine
+is specified but no frequency field is specified, then a frequency of B<1000>
+will be assumed.
+
+This field has no meaning if no checkpoint routine is specified with the
+"checkpoint" field.  The default frequency can be changed with the L<frequency>
+method.
+
 =item autoshutdown
 
  autoshutdown => 0, # default: 1
@@ -1538,6 +1615,17 @@ The L<minjobs> method can be called to change the job throttling settings
 during the lifetime of the object.
 
 =back
+
+=head2 frequency
+
+ Thread::Pool->frequency( 100 );
+
+ $frequency = Thread::Pool->frequency;
+
+The "frequency" class method allows you to specify the default frequency that
+will be used when a checkpoint routine is specified with the "checkpoint"
+field.  The default frequency is set to B<1000> if no other value has been
+previously specified.
 
 =head2 optimize
 
@@ -1715,6 +1803,13 @@ there are not enough worker threads available, new worker threads will be
 L<add>ed.
 
 The return value is the current number of worker threads.
+
+=head2 frequency
+
+ $frequency = $pool->frequency;
+
+The "frequency" instance method returns the frequency with which the checkpoint
+routine is being called.  Returns undef if no checkpointing is being done.
 
 =head2 maxjobs
 

@@ -1,6 +1,10 @@
 Check all the signalling going on and see whether they still make sense with
 what I now know about cond_signal and cond_wait.
 
+Think of other way to do streaming, possibly without having to lock the
+result hash, as that seems to hold up stuff severely when there are more
+than X threads at the same time trying to give their results.
+
 Investigate whether Data::Dumper could serve as an alternative for Storable.
 
 Add still more examples.
