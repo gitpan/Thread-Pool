@@ -3,7 +3,7 @@ package Thread::Pool;
 # Set the version information
 # Make sure we do everything by the book from now on
 
-$VERSION = '0.14';
+$VERSION = '0.15';
 use strict;
 
 # Make sure we can do threads
@@ -17,8 +17,14 @@ use Thread::Queue::Any ();
 use Storable ();
 
 # Allow for self referencing within job thread
+# Flag to indicate whether the current thread should be removed
+# The current jobid, when available
+# Flag to indicate result should _not_ be saved (assume another thread will)
 
 my $SELF;
+my $remove_me;
+my $jobid;
+my $dont_set_result;
 
 # Satisfy -require-
 
@@ -112,12 +118,6 @@ sub new {
     $self->add( $add );
     return $self;
 } #new
-
-#---------------------------------------------------------------------------
-#  IN: 1 class (ignored)
-# OUT: 1 instantiated queue object
-
-sub self { $SELF } #self
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
@@ -428,11 +428,6 @@ sub removed { keys %{$_[0]->{'removed'}} } #removed
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiated object
-
-sub remove_me { shift->{'remove_me'} = '' } #remove_me
-
-#---------------------------------------------------------------------------
-#  IN: 1 instantiated object
 #      2..N thread ID's to join (default: all active threads marked removed)
 
 sub join {
@@ -496,21 +491,18 @@ sub shutdown {
 # Obtain the object
 # Die now if not in the correct thread
 # Return now if are already shut down
+# Mark the object as shut down now (in case we die in here)
 
     my $self = shift;
     $self->_check_originating_thread( 'shutdown' );
     return if $self->{'shutdown'};
+    $self->{'shutdown'} = 1;
 
-# If there are still active workers available
-#  Send notification to all the workers
-# Wait until all jobs to be done are finished
-# Join all non-active workers (should be all now)
+# Notify all available active workers after all jobs
+# Join all workers, active or non-active (should be all now)
 
-    if (my $workers = $self->workers) {
-        $self->remove( $workers );
-    }
-    threads::yield() while $self->todo;
-    $self->join;
+    $self->workers( 0 );
+    $self->join( @{$self->{'workers'}} );
 
 # If we were streaming
 #  Obtain the current stream ID, job ID and result hash
@@ -522,7 +514,7 @@ sub shutdown {
         my ($streamid,$jobid,$result) = @$self{qw(streamid jobid result)};
         my @extra = exists $self->{'monitorq'} ? ($self) : ();
 	lock( $result );
-        my $last = $$jobid;
+        my $last = $self->_first_todo_jobid;
 
 #  For all the results that still need to be streamd
 #   Die if there is no result (_should_ be there by now)
@@ -549,10 +541,6 @@ sub shutdown {
 	delete( $self->{'monitort'} );
         $thread->join;
     }
-
-# Mark the object as shut down now
-
-    $self->{'shutdown'} = 1;
 } #shutdown
 
 #---------------------------------------------------------------------------
@@ -567,12 +555,17 @@ sub abort {
     $self->_check_originating_thread( 'abort' );
 
 # Reset the flag that we're running
-# Loop while there are still workers active
+# While there are still workers active
+#  Reset to 0 workers if there are no jobs left to do (they won't see the flag)
+#  Give the other threads a chance
 # Set the running flag again (in case workers get added later)
 # Collect the actual threads
 
     ${$self->{'running'}} = 0;
-    threads::yield() while $self->workers;
+    while ($self->workers) {
+        $self->workers( 0 ) unless $self->todo;
+        threads::yield();
+    }
     ${$self->{'running'}} = 1;
     $self->join;
 } #abort
@@ -602,6 +595,54 @@ sub notused {
     }
     return $notused;
 } #notused
+
+#---------------------------------------------------------------------------
+#  IN: 1 class (ignored)
+# OUT: 1 instantiated queue object
+
+sub self { $SELF } #self
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object or class (ignored)
+
+sub remove_me { $remove_me = 1 } #remove_me
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object or class (ignored)
+# OUT: 1 jobid of the job currently handled by this thread
+
+sub jobid { $jobid } #jobid
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object or class (ignored)
+
+sub dont_set_result { $dont_set_result = 1 } #dont_set_result
+
+#---------------------------------------------------------------------------
+#  IN: 1 instantiated object
+#      2 jobid
+#      3..N values to store
+
+sub set_result {
+
+# Obtain the object
+# Obtain the jobid
+# Return now if we're not supposed to save and it's its own job
+
+    my $self = shift;
+    my $set_jobid = shift;
+    return if $dont_set_result and $set_jobid == $jobid;
+
+# Obtain local copy of the result hash
+# Make sure we have only access to the result hash
+# Store the already frozen result
+# Make sure other threads get woken up
+
+    my $result = $self->{'result'};
+    lock( $result );
+    $result->{$set_jobid} = Storable::freeze( \@_ );
+    threads::shared::cond_broadcast( $result );
+} #set_result
 
 #---------------------------------------------------------------------------
 
@@ -634,22 +675,28 @@ sub _random {
 # While we're handling requests
 #  Fetch the next job when it becomes available
 #  Outloop if we're supposed to die
+#  Reset the don't save flag
 
     my (@list,$running_now);
     while ($running_now = $$running) {
         @list = $jobq->dequeue;
 	last unless $list[0];
+        $dont_set_result = undef;
 
 #  If no one is interested in the result
+#   Reset the jobid
 #   Execute the job without saving the result
 #  Else (someone is interested, so first parameter is jobid)
+#   Set the jobid
 #   Execute the job and save the frozen result
 #  Increment number of jobs done by this worker
 
         if (ref($list[0])) {
+	    $jobid = undef;
             $do->( @{$list[0]} );
         } else {
-            $self->_freeze( $list[0], $do->( @{$list[1]} ) );
+	    $jobid = $list[0];
+            $self->set_result( $jobid, $do->( @{$list[1]} ) );
         }
         $jobs++;
 
@@ -657,12 +704,13 @@ sub _random {
 #  Reset the jobid, we don't want the result to be saved ever
 #  Start shutting down this worker thread
 
-        next unless exists( $self->{'remove_me'} );
+        next unless $remove_me;
         $list[1] = '';
         last;
     }
 
 # If we're not aborting
+#  Reset the don't save flag
 #  If someone is interested in the result of "remove" (so we have a jobid)
 #   Execute the post-action (if there is one) and save the frozen result
 #  Else (nobody's interested)
@@ -670,8 +718,9 @@ sub _random {
 # Mark this worker thread as removed
 
     if ($running_now) {
-        if ($list[1]) {
-            $self->_freeze( $list[1], $post ? $post->( @_ ) : () );
+        $dont_set_result = undef;
+        if ($jobid = $list[1]) {
+            $self->set_result( $list[1], $post ? $post->( @_ ) : () );
         } else {
             $post->( @_ ) if $post;
         }
@@ -708,21 +757,28 @@ sub _stream {
 # While we're handling requests, keeping copy of the flag on the fly
 #  Fetch the next job when it becomes available
 #  Outloop if we're supposed to die
+#  Reset the don't save flag
 
-    my (@list,$jobid,$running_now);
+    my (@list,$running_now);
     while ($running_now = $$running) {
         @list = $jobq->dequeue;
 	last unless $jobid = $list[0];
+        $dont_set_result = undef;
 
 #  If we're in sync (this job is the next one to be streamed)
-#   Stream the result of the job immediately
-#   Increment stream id
+#   Obtain the result of the job
+#   If we're supposed to save the result
+#    Stream the result of the job immediately
+#    Increment stream id
 #   Increment number of jobs
 #   And reloop
 
         if ($$streamid == $jobid) {
-            $stream->( @extra,$do->( @{$list[1]} ) );
-	    { lock($streamid); ${$streamid} = $jobid+1 }
+            my @param = $do->( @{$list[1]} );
+            unless ($dont_set_result) {
+                $stream->( @extra,@param );
+                { lock($streamid); ${$streamid} = $jobid+1 }
+            }
             $jobs++;
 	    next;
         }
@@ -752,17 +808,20 @@ sub _stream {
          }
 
 #  If all results until this job ID have been streamed
-#   Call the "stream" routine with the result of this job ID
-#   Set the stream ID to handle the result after this one
+#   If we need to save this result
+#    Call the "stream" routine with the result of this job
+#    Set the stream ID to handle the result after this one
 #  Else (not all results where available)
 #   Freeze the result of this job for later handling
 #   Set the stream ID to the job ID for which there was no result yet
 
          if ($i == $jobid) {
-             $stream->( @extra,@param );
-             $$streamid = $jobid+1;
+             unless ($dont_set_result) {
+                 $stream->( @extra,@param );
+                 $$streamid = $jobid+1;
+             }
          } else {
-             $self->_freeze( $jobid, @param );
+             $self->set_result( $jobid, @param );
              $$streamid = $i;
          }
         }
@@ -771,12 +830,13 @@ sub _stream {
 #  Reset the jobid, we don't want the result to be saved ever
 #  Start shutting down this worker thread
 
-        next unless exists( $self->{'remove_me'} );
+        next unless $remove_me;
         $list[1] = '';
         last;
     }
 
 # If we're not aborting
+#  Reset the don't save flag
 #  If someone is interested in the result of <end> (so we have a jobid)
 #   Execute the post-action (if there is one) and save the frozen result
 #  Else (nobody's interested)
@@ -784,8 +844,9 @@ sub _stream {
 # Mark this worker thread as removed
 
     if ($running_now) {
+        $dont_set_result = undef;
         if ($list[1]) {
-            $self->_freeze( $list[1], $post ? $post->( @_ ) : () );
+            $self->set_result( $list[1], $post ? $post->( @_ ) : () );
         } else {
             $post->( @_ ) if $post;
         }
@@ -854,60 +915,30 @@ sub _jobid {
 } #_jobid
 
 #---------------------------------------------------------------------------
-#  IN: 1 instantiated object
-#      2 jobid
-#      3..N values to store
+#  IN: 1 instantiated Thread::Pool object
+# OUT: 1 job id of first todo job
 
-sub _freeze {
-
-# Obtain the object
-# Obtain the jobid
-# Obtain local copy of the result hash
-
-    my $self = shift;
-    my $jobid = shift;
-    my $result = $self->{'result'};
-
-# Make sure we have only access to the result hash
-# Store the already frozen result
-# Make sure other threads get woken up
-
-    lock( $result );
-    $result->{$jobid} = Storable::freeze( \@_ );
-    threads::shared::cond_broadcast( $result );
-} #_freeze
-
-#---------------------------------------------------------------------------
-#  IN: 1 instantiated object
-#      2 jobid
-# OUT: 1..N result from indicated job
-
-sub _thaw {
+sub _first_todo_jobid {
 
 # Obtain the object
-# Obtain the jobid
-# Obtain local copy of result hash
-# Make sure we have a value outside of the block
+# Obtain the reference to the job queue
+# Make sure we're the only one handling the job queue
 
     my $self = shift;
-    my $jobid = shift;
-    my $result = $self->{'result'};
-    my $value;
+    my $jobq = $self->{'jobq'};
+    lock( $jobq );
 
-# Make sure we're the only ones in the result hash
-# Obtain the frozen value
-# Remove it from the result hash
+# For all the jobs in the queue
+#  De-frost the values in there
+#  Return the job id if it is a job with a job id
+# Return the next job id that is going to be issued
 
-    {
-     lock( $result );
-     $value = $result->{$jobid};
-     delete( $result->{$jobid} );
+    foreach (@{$jobq}) {
+        my @param = @{Storable::thaw( $_ )};
+	return $param[0] if @param == 2;
     }
-
-# Return the result of thawing
-
-    @{Storable::thaw( $value )};
-} #_thaw
+    return ${$self->{'jobid'}};
+} #_first_todo_jobid
 
 #---------------------------------------------------------------------------
 #  IN: 1 instantiate Thread::Pool object
@@ -992,7 +1023,7 @@ Thread::Pool - group of threads for performing similar jobs
  $done    = $pool->done;   # simple thread-use statistics
  $notused = $pool->notused;
 
- shift->remove_me;	# inside "do" only
+ Thread::Pool->remove_me;  # inside "do" only
 
 =head1 DESCRIPTION
 
@@ -1256,13 +1287,6 @@ it is probably wiser to use the "stream" routine feature.
 
 =back
 
-=head2 self
-
- $queue = Thread::Pool->self; # only within "pre", "do" and "post"
-
-The class method "self" returns the object to which this thread belongs.
-It is available within the "pre", "do" and "post" subroutines only.
-
 =head1 POOL METHODS
 
 The following methods can be executed on the Thread::Pool object.
@@ -1485,17 +1509,63 @@ has been called.
 
 =head1 INSIDE JOB METHODS
 
-The following methods only make sense when executed on the first parameter
-passed to the "pre", "do" or "post" routines.
+The following methods only make sense inside the "pre", "do", "post",
+"stream" and "monitor" routines.
+
+=head2 self
+
+ $pool = Thread::Pool->self;
+
+The class method "self" returns the object to which this thread belongs.
+It is available within the "pre", "do", "post", "stream" and "monitor"
+subroutines only.
 
 =head2 remove_me
 
- Thread::Pool->self->remove_me;
+ Thread::Pool->remove_me;
 
-The "remove_me" method only makes sense within the "do" subroutine.  It
-indicates to the job dispatcher that this worker thread should be removed
+The "remove_me" class method only makes sense within the "do" subroutine.
+It indicates to the job dispatcher that this worker thread should be removed
 from the pool.  After the "do" subroutine returns, the worker thread will
 be removed.
+
+=head2 jobid
+
+ Thread::Pool->jobid;
+
+The "jobid" class method only makes sense within the "do" subroutine in
+streaming mode.  It returns the job ID value of the current job.  This can
+be used connection with the L<dont_set_result> and the L<set_result> methods
+to have another thread set the result of the current job.
+
+=head2 dont_set_result
+
+ Thread::Pool->dont_set_result;
+
+The "dont_set_result" class method only makes sense within the "do" subroutine.
+It indicates to the job dispatcher that the result of this job should B<not>
+be saved.  This is for cases where the result of this job will be placed in
+the result hash at some time in the future by another thread using the
+L<set_result> method.
+
+=head2 set_result
+
+ Thread::Pool->self->set_result( $jobid,@param );
+
+The "set_result" object method only makes sense within the "do" subroutine.
+It allows you to set the result of B<other> jobs than the one currently being
+performed.
+
+This method is only needed in B<very> special situations.  Normally, just
+returning values from the "do" subroutine is enough to have the result saved.
+This method is exposed to the outside world in those cases where a specific
+thread becomes responsible for setting the result of other threads (which
+used the L<dont_set_result> method to defer saving their result.
+
+The first input parameter specifies the job ID of the job for which to set
+the result.  The rest of the input parameters is considered to be the result
+to be saved.  Whatever is specified in the rest of the input parameters, will
+be returned with the L<result> or L<result_dontwait> methods.
 
 =head1 CAVEATS
 

@@ -1,3 +1,35 @@
+0.15	19 July 2002
+	Also fixed "abort" functionality in case there weren't any jobs to
+	do anymore: the worker threads would be blocked on reading the job
+	queue and not see the abort flag.  Now, the remaining threads are
+	signalled to stop the ordinary way.
+
+	Added test-suite for "abort" functionality.  Added internal routine
+	"_first_todo_jobid" which allows "shutdown" to only stream results
+	of jobs actually done, rather then to try to stream results that
+	weren't created yet.  This should fix the "abort" functionality.
+
+	Renamed internal routine "_freeze" to "set_result" and exposed it to
+	the world as part of the "jobid" and "dont_set_result" combo.  This
+	should now allow the development of the completely asynchronous log
+	resolve module I was thinking about, where lookups on the same IP
+	number will be handled by a single thread rather than by any thread
+	that just happens to get the IP-number.
+
+	Removed internal routine "_thaw": all thawing internally is done by
+	calling Storable directly for speed, so it was dead wood.
+
+	Added "jobid" and "dont_set_result" methods to allow "do" subroutines
+	to have other threads create the result of the current thread.  Adapted
+	the _random and _stream dispatcher to honour these new methods.
+
+	Simplified the "remove_me" functionality by a simple lexical flag
+	rather than having to use the object.  This now also makes it a
+	class method.
+
+	Fixed several minor pod nits.  Removed some Carp cruft from the
+	test-suite.
+
 0.14	18 July 2002
 	Fixed problem with monitoring a thread that was't finished when
 	shutdown time was encountered.
@@ -24,7 +56,7 @@
 
 	No longer passes the Thread::Pool object to the "do", "pre" and
 	"post" routine.  This to conform to the way Thread::Queue::Monitored
-	works.  If the object is needed, the "self" class object should be
+	works.  If the object is needed, the "self" class method should be
 	called.  This change should also speed up things a bit.
 
         Added class method "self" for use within the "pre", "do", "post",

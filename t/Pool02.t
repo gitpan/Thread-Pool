@@ -5,9 +5,6 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use Carp ();
-$SIG{__DIE__} = \&Carp::confess;
-
 BEGIN {our $tests = 1 + (2*5*19)}
 use Test::More tests => $tests;
 use strict;

@@ -3,7 +3,7 @@ submitted.  So, if number of jobs is larger than high, job() will block until
 number of jobs is lower than low.
 
 Add Thread::Pool::LogResolve functionality.  Possibly add an IO-layer for
-it.  Think about a solution for the problem
+it.
 
 Add test-suite for "abort" functionality.
 

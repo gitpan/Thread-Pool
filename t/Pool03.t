@@ -5,8 +5,6 @@ BEGIN {				# Magic Perl CORE pragma
     }
 }
 
-use Carp;
-
 use strict;
 use IO::Handle; # needed, cause autoflush method doesn't load it
 our $tests;
