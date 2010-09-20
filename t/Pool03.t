@@ -8,7 +8,7 @@ BEGIN {				# Magic Perl CORE pragma
 use strict;
 use warnings;
 use IO::Handle; # needed, cause autoflush method doesn't load it
-use Test::More tests => 3 + (2*2*4*25);
+use Test::More tests => 3 + (2*2*4*21);
 
 $SIG{__DIE__} = sub { require Carp; Carp::confess() };
 $SIG{__WARN__} = sub { require Carp; Carp::confess() };
@@ -39,12 +39,12 @@ my @amount = (
 
 sub pre {
   return if Thread::Pool->self;
-  ok( open( $handle,">$_[0]" ),		'open monitoring file' );
+  open( $handle,">$_[0]" ) or die "Could not open monitoring file";
 }
 
 sub post {
   return unless Thread::Pool->monitor;
-  ok( close( $handle ),			'close monitoring file' );
+  close( $handle ) or die "Could not close monitoring file";
 }
 
 sub do { sprintf( $format,$_[0] ) }
@@ -64,6 +64,7 @@ foreach my $optimize (qw(cpu memory)) {
 }
 
 ok( unlink( $file ),			'check unlinking of file' );
+1 while unlink $file; # multiversioned filesystems
 
 
 sub _runtest {

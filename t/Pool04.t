@@ -8,7 +8,7 @@ BEGIN {				# Magic Perl CORE pragma
 use strict;
 use warnings;
 use IO::Handle;
-use Test::More tests => 1 + (2*2*4*12) + 9;
+use Test::More tests => 1 + (2*2*4*10) + 9;
 
 $SIG{__DIE__} = sub { require Carp; Carp::confess() };
 $SIG{__WARN__} = sub { require Carp; Carp::confess() };
@@ -36,12 +36,12 @@ my @amount = (
 
 
 sub pre {
-  ok( open( $handle,">$_[0]" ),		'open monitoring file' );
+  open( $handle,">$_[0]" ) or die "Could not open monitoring file";
   $handle->autoflush;
 }
 
 sub post {
-  ok( close( $handle ),			'close monitoring file' );
+  close( $handle ) or die "Could not close monitoring file";
 }
 
 sub do { sleep( rand(2) ); sprintf( $format,$_[0] ) }
@@ -59,6 +59,7 @@ foreach my $optimize (qw(cpu memory)) {
 }
 
 ok( unlink( $file ) );
+1 while unlink $file; # multiversioned filesystems
 
 my $pool = Thread::Pool->new( {do => \&do, workers => 2} );
 isa_ok( $pool,'Thread::Pool',		'check object type' );
@@ -71,6 +72,8 @@ cmp_ok( $pool->minjobs(10),'==',10,	'check minjobs value, #3' );
 
 cmp_ok( $pool->maxjobs(0),'==',0,	'check maxjobs value, #3' );
 cmp_ok( $pool->minjobs,'==',0,		'check minjobs value, #4' );
+
+$pool->shutdown;
 
 sub _runtest {
 
